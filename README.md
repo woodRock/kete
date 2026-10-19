@@ -7,8 +7,9 @@ from Westpac One online banking. No credentials, no scraping, no aggregator.
 
 ```sh
 uv sync
-uv run kete import ~/Downloads/uber_account.csv ~/Downloads/savings_account.csv
-uv run kete transfers detect          # review proposed Savings -> Uber pairs
+uv run kete accounts add everyday --label "Everyday"
+uv run kete import ~/Downloads/everyday_account.csv ~/Downloads/savings_account.csv
+uv run kete transfers detect          # review proposed Savings -> Everyday pairs
 uv run kete transfers detect --apply
 uv run kete tui
 ```
