@@ -3,14 +3,29 @@
 Local-first personal finance CLI and TUI for Westpac NZ. It reads only files you export by hand
 from Westpac One online banking. No credentials, no scraping, no aggregator.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/woodRock/kete/main/install.sh | bash
+```
+
+This installs `kete` with [uv](https://docs.astral.sh/uv/) as an isolated tool in `~/.local/bin`,
+installing uv first if needed (and Python 3.11 if the machine doesn't have it). No sudo. Add
+`bash -s -- --upgrade` to update to the latest `main`, or `bash -s -- --uninstall` to remove it:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/woodRock/kete/main/install.sh | bash -s -- --upgrade
+```
+
+For development, from a checkout: `uv sync`, then `uv run kete ...`.
+
 ## Quick start
 
 ```sh
-uv sync
-uv run kete import ~/Downloads/everyday_account.csv ~/Downloads/savings_account.csv
-uv run kete transfers detect          # review proposed Savings -> Everyday pairs
-uv run kete transfers detect --apply
-uv run kete tui
+kete import ~/Downloads/everyday_account.csv ~/Downloads/savings_account.csv
+kete transfers detect          # review proposed Savings -> Everyday pairs
+kete transfers detect --apply
+kete tui
 ```
 
 Data lives in `~/kete` (override with `KETE_HOME`): `inbox/`, `archive/YYYY/`, `kete.db`, `rules.toml`.
