@@ -59,11 +59,13 @@ other). How a file finds its account, in order:
 | `kete stale [--days 30]` | Accounts that need a fresh export (exit code 2 if any) |
 | `kete sql "SELECT …"` | Read-only SQL |
 | `kete dashboard [--demo] [--no-open] [--out FILE]` | Build and open the local HTML dashboard |
+| `kete report [--month M \| --year Y \| --tax-year Y] [--demo]` | Findings report for a period (default: last month) |
+| `kete report dismiss ID` / `restore ID` | Hide or bring back a finding in future reports |
 | `kete tui` | Terminal UI: Overview, Transactions, Categories, Uncategorised, Import log |
 
 Every read command takes `--json`.
 
-TUI keys: `d` open the dashboard, `1`–`5` tabs, `c` set category, `t` toggle transfer, `n` create a rule from the payee,
+TUI keys: `d` open the dashboard, `p` last month's report, `1`–`5` tabs, `c` set category, `t` toggle transfer, `n` create a rule from the payee,
 `o` raw row, `[`/`]` change month on Categories, Enter drills down, `r` refresh, `q` quit.
 
 ## Dashboard
@@ -92,6 +94,35 @@ savings_goal = 10000     # draws a goal line; 0 = none
 
 `kete dashboard --demo` shows the same page with synthetic data. Agents changing the
 dashboard should use it, and read [AGENTS.md](AGENTS.md).
+
+## Reports
+
+`kete report` checks a period (default: last complete month; `--year 2026`, or `--tax-year 2026`
+for 1 April 2025 to 31 March 2026) and writes `~/kete/reports/<period>.html`. Each finding lists the
+transactions behind it. The checks are:
+
+- unusually large charges at a familiar merchant
+- possible double charges
+- price rises on regular charges
+- new subscriptions
+- large first-time payments to a new merchant
+- categories well above or below your normal
+- fees
+- spending more than came in
+- data gaps and uncategorised spending
+
+Year and tax-year reports add a month-by-month chart and an interest summary (gross interest
+and RWT withheld, read from Westpac's interest entries). Dismiss a finding on the page, and run the
+`kete report dismiss ID` command it shows to hide it in future reports too. Everything runs
+locally, with the same no-network page as the dashboard. Tune the thresholds in `rules.toml`:
+
+```toml
+[report]
+spike_ratio = 1.4          # flag a category at 1.4x its normal...
+spike_min = 60             # ...when it's at least $60 over
+unusual_multiple = 2.5     # a charge 2.5x a merchant's usual amount
+large_new_merchant = 150   # first payments above $150 to a new merchant
+```
 
 ## What the Westpac CSV looks like (verified Oct 2026)
 

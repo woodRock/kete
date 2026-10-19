@@ -68,6 +68,12 @@ CREATE TABLE IF NOT EXISTS balances (
     PRIMARY KEY (account_id, as_of, source)
 );
 
+-- Report findings the owner has dismissed (by stable finding id), so they stay hidden.
+CREATE TABLE IF NOT EXISTS dismissals (
+    finding_id   TEXT PRIMARY KEY,
+    dismissed_at TEXT NOT NULL
+);
+
 -- Remembered answers to "which account is this CSV?" keyed by a filename pattern.
 CREATE TABLE IF NOT EXISTS file_mappings (
     pattern    TEXT PRIMARY KEY,

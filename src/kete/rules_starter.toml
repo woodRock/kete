@@ -83,3 +83,11 @@ category = "Fees"
 # default_cut = 0.25
 # interest_rate = 0.03
 # savings_goal = 0
+
+# Report thresholds (kete report). Uncomment to change the defaults.
+# [report]
+# spike_ratio = 1.4
+# spike_min = 60
+# unusual_multiple = 2.5
+# large_new_merchant = 150
+# duplicate_min = 15

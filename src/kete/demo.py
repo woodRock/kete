@@ -54,9 +54,21 @@ def build_demo_db(today: date | None = None, months: int = 15, seed: int = 7) ->
 
     rows: list[tuple] = []
 
-    def add(acct: int, d: date, amount: float, payee: str, desc: str = "DEBIT", code: str = "") -> None:
+    def add(acct: int, d: date, amount: float, payee: str, desc: str = "DEBIT", code: str = "",
+            particulars: str = "", reference: str = "") -> None:
         if d <= today:
-            rows.append((acct, d.isoformat(), round(amount * 100), payee, desc, code))
+            rows.append((acct, d.isoformat(), round(amount * 100), payee, desc, code, particulars, reference))
+
+    # One of each thing the report detectors look for, placed in the last complete month.
+    last_month = (today.replace(day=1) - timedelta(days=1)).replace(day=1)
+    two_back = (last_month - timedelta(days=1)).replace(day=1)
+    add(everyday, last_month.replace(day=12), -64.00, "Bike Shop")  # possible double charge
+    add(everyday, last_month.replace(day=12), -64.00, "Bike Shop")
+    add(everyday, last_month.replace(day=14), -312.40, "COUNTDOWN METRO")  # far above usual
+    add(everyday, last_month.replace(day=20), -899.00, "Noel Leeming")  # large first-time payment
+    add(everyday, last_month.replace(day=17), -4.80, "Foreign Currency Fee")
+    for m in (two_back, last_month):  # a new subscription
+        add(everyday, m.replace(day=6), -12.99, "Fitness Plus App")
 
     d = start
     week = 0
@@ -91,8 +103,8 @@ def build_demo_db(today: date | None = None, months: int = 15, seed: int = 7) ->
             add(everyday, d, -rng.uniform(2, 6), "Foreign Currency Fee")
         if rng.random() < 0.025:
             add(everyday, d, -rng.uniform(15, 80), rng.choice(["Hardware Depot", "Market Stall"]))
-        if d.day == 3:
-            add(everyday, d, -18.99, f"Netflix.com {d.day:02d}")
+        if d.day == 3:  # price rise in the last complete month
+            add(everyday, d, -22.99 if d >= last_month else -18.99, f"Netflix.com {d.day:02d}")
         if d.day == 9:
             add(everyday, d, -16.99, f"Spotify {d.day:02d}")
         if d.day == 15:
@@ -101,16 +113,20 @@ def build_demo_db(today: date | None = None, months: int = 15, seed: int = 7) ->
             add(everyday, d, -rng.uniform(190, 260) if winter else -rng.uniform(120, 170), "Mercury Energy", "BILL PAYMENT")
         if d.day == 25:
             add(everyday, d, -45.00, "One NZ Mobile", "BILL PAYMENT")
-        if d.day == 1 and d > start:
-            add(savings, d - timedelta(days=1), round(rng.uniform(8, 14), 2), "Credit Interest", "Credit Interest")
+        if d.day == 1 and d > start:  # Westpac format: gross in Particulars, RWT in Reference
+            gross = round(rng.uniform(10, 17), 2)
+            rwt = round(gross * 0.175, 2)
+            add(savings, d - timedelta(days=1), gross - rwt, "Credit Interest", "Credit Interest",
+                "Less W/Tax", f"${gross:.2f}", f"${rwt:.2f}")
         d += timedelta(days=1)
 
-    for i, (acct, posted, cents, payee, desc, code) in enumerate(rows):
-        particulars = "WBC Internet" if code == "Transfer" else ""
+    for i, (acct, posted, cents, payee, desc, code, particulars, reference) in enumerate(rows):
+        particulars = "WBC Internet" if code == "Transfer" else particulars
         conn.execute(
             """INSERT INTO transactions (account_id, posted_date, amount_cents, payee, description,
-               particulars, code, dedupe_key, source, raw_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'demo', ?)""",
-            (acct, posted, cents, payee, desc, particulars, code, f"demo:{i}",
+               particulars, code, reference, dedupe_key, source, raw_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'demo', ?)""",
+            (acct, posted, cents, payee, desc, particulars, code, reference, f"demo:{i}",
              json.dumps({"Other Party": payee, "Description": desc})))
     rules = rules_mod.parse_rules(rules_mod.starter_rules() + DEMO_RULES, "demo rules")
     rules_mod.apply_rules(conn, rules)

@@ -101,6 +101,7 @@ class KeteApp(App):
         Binding("n", "new_rule", "Rule from payee"),
         Binding("o", "open_raw", "Raw row"),
         Binding("d", "dashboard", "Dashboard"),
+        Binding("p", "report", "Report"),
         Binding("left_square_bracket", "month(-1)", "Prev month"),
         Binding("right_square_bracket", "month(1)", "Next month"),
     ]
@@ -356,6 +357,18 @@ class KeteApp(App):
         path = dash.generate(self.conn, self.paths.home / "dashboard.html", self.paths.rules)
         webbrowser.open(path.resolve().as_uri())
         self.notify(f"Dashboard opened: {path}")
+
+    def action_report(self) -> None:
+        """Last complete month's report (`kete report --year` etc. for other periods)."""
+        import webbrowser
+
+        from . import report as rep
+
+        kind, start, end, label = rep.parse_period()
+        path = rep.generate(self.conn, self.paths.home / "reports" / rep.default_filename(kind, start, end),
+                            kind, start, end, label, self.paths.rules)
+        webbrowser.open(path.resolve().as_uri())
+        self.notify(f"Report opened: {path}")
 
     def action_open_raw(self) -> None:
         tx = self._selected_tx()

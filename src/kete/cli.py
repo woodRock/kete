@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import sys
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +24,8 @@ balance_app = typer.Typer(no_args_is_help=True, help="Balance anchors (CSV expor
 accounts_app = typer.Typer(help="List, add and edit accounts.")
 app.add_typer(accounts_app, name="accounts")
 categories_app = typer.Typer(help="List and rename categories.")
+report_app = typer.Typer(help="Reports: findings for a month, year or NZ tax year.")
+app.add_typer(report_app, name="report")
 app.add_typer(categories_app, name="categories")
 app.add_typer(rules_app, name="rules")
 app.add_typer(transfers_app, name="transfers")
@@ -541,6 +543,71 @@ def dashboard(
     console.print(f"Dashboard written to {path}")
     if open_:
         webbrowser.open(path.resolve().as_uri())
+
+
+# --------------------------------------------------------------------------- report
+
+
+@report_app.callback(invoke_without_command=True)
+def report(
+    ctx: typer.Context,
+    month: Optional[str] = typer.Option(None, "--month", help="yyyy-mm; default: last complete month."),
+    year: Optional[int] = typer.Option(None, "--year", help="Calendar year, e.g. 2026."),
+    tax_year: Optional[int] = typer.Option(None, "--tax-year", help="NZ tax year ending 31 March, e.g. 2026."),
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Where to write the HTML file."),
+    open_: bool = typer.Option(True, "--open/--no-open", help="Open it in your browser."),
+    demo: bool = typer.Option(False, "--demo", help="Use synthetic data (for previews and agents)."),
+    as_json: bool = typer.Option(False, "--json", help="Print the report model instead of writing HTML."),
+):
+    """Build a report of findings: unusual charges, price rises, double charges, fees and more."""
+    if ctx.invoked_subcommand:
+        return
+    import tempfile
+    import webbrowser
+
+    from . import report as rep
+
+    if sum(x is not None for x in (month, year, tax_year)) > 1:
+        raise typer.BadParameter("use one of --month, --year or --tax-year")
+    try:
+        kind, start, end, label = rep.parse_period(month, year, tax_year)
+    except ValueError as e:
+        raise typer.BadParameter(str(e))
+    paths = get_paths()
+    if demo:
+        from .demo import build_demo_db
+
+        conn, rules_path = build_demo_db(), None
+        out = out or Path(tempfile.gettempdir()) / "kete-demo" / "reports" / rep.default_filename(kind, start, end)
+    else:
+        conn, rules_path = _open(readonly=False), paths.rules
+        out = out or paths.home / "reports" / rep.default_filename(kind, start, end)
+    if as_json:
+        return _emit_json(rep.build_report(conn, kind, start, end, label, rep.load_config(rules_path), demo=demo))
+    path = rep.generate(conn, out, kind, start, end, label, rules_path, demo=demo)
+    console.print(f"Report written to {path}")
+    if open_:
+        webbrowser.open(path.resolve().as_uri())
+
+
+@report_app.command("dismiss")
+def report_dismiss(finding_ids: list[str] = typer.Argument(..., help="Ids shown on the report page.")):
+    """Hide findings from future reports."""
+    conn = _open(readonly=False)
+    now = datetime.now().isoformat(timespec="seconds")
+    conn.executemany("INSERT OR REPLACE INTO dismissals (finding_id, dismissed_at) VALUES (?, ?)",
+                     [(f, now) for f in finding_ids])
+    conn.commit()
+    console.print(f"Dismissed {len(finding_ids)} finding{'s' if len(finding_ids) != 1 else ''}.")
+
+
+@report_app.command("restore")
+def report_restore(finding_ids: list[str] = typer.Argument(...)):
+    """Show previously dismissed findings again."""
+    conn = _open(readonly=False)
+    n = sum(conn.execute("DELETE FROM dismissals WHERE finding_id = ?", (f,)).rowcount for f in finding_ids)
+    conn.commit()
+    console.print(f"Restored {n}.")
 
 
 # --------------------------------------------------------------------------- tui

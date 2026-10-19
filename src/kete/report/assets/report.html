@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network access at all: the page can only use what is inlined below. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>kete report</title>
+<style>/*__STYLE__*/</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <div>
+      <h1 id="title">Report</h1>
+      <p class="sub" id="period"></p>
+    </div>
+  </div>
+  <nav aria-label="Sections">
+    <a href="#summary">Summary</a>
+    <a href="#findings">Findings</a>
+    <a href="#categories">Categories</a>
+    <a href="#months" id="nav-months" hidden>Months</a>
+    <a href="#tax" id="nav-tax" hidden>Tax</a>
+    <a href="#largest">Largest</a>
+  </nav>
+  <button class="theme" id="print" type="button" aria-label="Print or save as PDF" title="Print or save as PDF">⎙</button>
+  <button class="theme" id="theme" type="button" aria-label="Toggle colour theme">◐</button>
+</header>
+
+<main>
+  <div class="banner" id="demo-banner" hidden>Demo data. Run <code>kete report</code> for your own numbers.</div>
+  <div class="banner" id="partial-banner" hidden></div>
+
+  <section id="summary">
+    <div class="kpis" id="kpis"></div>
+  </section>
+
+  <section id="findings" class="card">
+    <div class="card-head">
+      <div>
+        <h2>Findings</h2>
+        <p class="hint" id="findings-hint"></p>
+      </div>
+      <div class="seg" role="tablist" aria-label="Filter findings" id="finding-filter">
+        <button type="button" role="tab" aria-selected="true" data-filter="all">All</button>
+        <button type="button" role="tab" aria-selected="false" data-filter="attention">Needs a look</button>
+        <button type="button" role="tab" aria-selected="false" data-filter="good">Good news</button>
+      </div>
+    </div>
+    <div id="finding-list"></div>
+    <label class="show-dismissed"><input type="checkbox" id="show-dismissed"> <span id="dismissed-label">Show dismissed</span></label>
+  </section>
+
+  <section id="categories" class="card">
+    <div class="card-head">
+      <div>
+        <h2>Categories</h2>
+        <p class="hint" id="categories-hint"></p>
+      </div>
+    </div>
+    <div class="legend" id="category-legend"></div>
+    <div id="category-chart"></div>
+    <details><summary>Show as table</summary><div id="category-table"></div></details>
+  </section>
+
+  <section id="months" class="card" hidden>
+    <h2>Month by month</h2>
+    <div class="legend">
+      <span><i class="key" style="background:var(--s1)"></i> Income</span>
+      <span><i class="key" style="background:var(--s2)"></i> Spending</span>
+    </div>
+    <div class="chart" id="month-chart"></div>
+    <details><summary>Show as table</summary><div id="month-table"></div></details>
+  </section>
+
+  <section id="tax" class="card" hidden>
+    <h2>Interest and tax</h2>
+    <p class="hint">From Westpac's interest entries. Check against the annual RWT certificate before filing.</p>
+    <div class="tax-grid" id="tax-grid"></div>
+  </section>
+
+  <section id="largest" class="card">
+    <h2>Largest purchases</h2>
+    <div id="largest-table"></div>
+  </section>
+</main>
+
+<footer>
+  <p id="detectors"></p>
+  <p>Generated locally by kete on <span id="generated"></span>. This file makes no network requests and contains your financial data; keep it private.</p>
+</footer>
+
+<div class="tooltip" id="tooltip" role="status" hidden></div>
+<script type="application/json" id="kete-data">__DATA__</script>
+<script>/*__SCRIPT__*/</script>
+</body>
+</html>

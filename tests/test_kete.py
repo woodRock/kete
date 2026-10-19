@@ -590,3 +590,137 @@ def test_tui_change_month_keys_and_buttons(env, monkeypatch):
             assert app.cat_month == "2026-09"
             assert app.query_one("#cat-table").row_count > 0
     asyncio.run(run())
+
+
+# --------------------------------------------------------------------------- reports
+
+TODAY = date(2026, 10, 19)
+
+
+@pytest.fixture(scope="module")
+def demo_report():
+    from kete import report as rep
+    from kete.demo import build_demo_db
+
+    conn = build_demo_db(today=TODAY)
+    kind, start, end, label = rep.parse_period(today=TODAY)
+    return conn, rep.build_report(conn, kind, start, end, label, today=TODAY, demo=True)
+
+
+def _by_detector(model):
+    out = {}
+    for f in model["findings"]:
+        out.setdefault(f["detector"], []).append(f)
+    return out
+
+
+def test_parse_period():
+    from kete.report import parse_period
+
+    assert parse_period(today=TODAY)[1:3] == (date(2026, 9, 1), date(2026, 9, 30))
+    assert parse_period(month="2026-02", today=TODAY)[1:3] == (date(2026, 2, 1), date(2026, 2, 28))
+    assert parse_period(tax_year=2026)[1:] == (date(2025, 4, 1), date(2026, 3, 31), "Tax year 2025–26")
+    with pytest.raises(ValueError):
+        parse_period(month="Sept")
+
+
+def test_report_finds_each_planted_issue(demo_report):
+    _, m = demo_report
+    found = _by_detector(m)
+    assert any("Bike Shop" in f["title"] for f in found["duplicate_charge"])
+    assert any("COUNTDOWN" in f["title"] for f in found["unusual_charge"])
+    assert any("Noel Leeming" in f["title"] for f in found["new_merchant"])
+    price = next(f for f in found["price_rise"] if "Netflix" in f["title"])
+    assert price["impact_yearly"] == pytest.approx(48.0, abs=1)
+    assert any("Fitness Plus" in f["title"] for f in found["new_subscription"])
+    assert found["fees"][0]["evidence"]
+    assert any(f["title"].startswith("Shopping") for f in found["category_change"])
+    # every finding is explainable and has a stable id
+    for f in m["findings"]:
+        assert f["id"] and f["title"] and f["severity"] in ("high", "medium", "low", "good")
+    assert "price_rise" not in {f["detector"] for f in m["findings"] if "NEW WORLD" in f["title"]}
+
+
+def test_report_summary_and_comparison(demo_report):
+    _, m = demo_report
+    assert m["period"]["complete"] and m["previous"]["label"] == "August 2026"
+    assert m["summary"]["spend"] == pytest.approx(sum(c["spend"] for c in m["categories"]), abs=0.05)
+    assert all(t["amount"] < 0 for t in m["largest"])
+
+
+def test_report_ids_are_stable_and_dismissals_stick(env):
+    from kete import report as rep
+    from kete.demo import build_demo_db
+
+    conn = build_demo_db(today=TODAY)
+    kind, start, end, label = rep.parse_period(today=TODAY)
+    first = rep.build_report(conn, kind, start, end, label, today=TODAY)
+    again = rep.build_report(conn, kind, start, end, label, today=TODAY)
+    assert [f["id"] for f in first["findings"]] == [f["id"] for f in again["findings"]]
+    target = first["findings"][0]["id"]
+    conn.execute("INSERT INTO dismissals VALUES (?, '2026-10-19')", (target,))
+    after = rep.build_report(conn, kind, start, end, label, today=TODAY)
+    assert next(f for f in after["findings"] if f["id"] == target)["dismissed"]
+
+
+def test_tax_year_interest_from_westpac_fields(env):
+    from kete import report as rep
+
+    paths, conn = env
+    f = paths.inbox / "savings_x.csv"
+    f.write_text('Date,Amount,Other Party,Description,Reference,Particulars,Analysis Code\n'
+                 '30/04/2025,0.39,"Bonus Interest","Credit Interest","$0.05","$0.44","Less W/Tax"\n'
+                 '31/05/2025,0.01,"Credit Interest","Credit Interest","","$0.01","Exempt"\n')
+    importer.import_file(conn, paths, f)
+    kind, start, end, label = rep.parse_period(tax_year=2026)
+    tax = rep.build_report(conn, kind, start, end, label, today=TODAY)["tax"]
+    assert tax == {"payments": 2, "gross": 0.45, "rwt": 0.05, "net": 0.40}
+
+
+def test_unfinished_period_compares_same_days():
+    from kete import report as rep
+    from kete.demo import build_demo_db
+
+    conn = build_demo_db(today=TODAY)
+    m = rep.build_report(conn, "year", date(2026, 1, 1), date(2026, 12, 31), "2026", today=TODAY)
+    assert m["previous"]["end"] == "2025-10-19" and m["previous"]["partial"]
+    assert not m["period"]["complete"]
+
+
+def test_new_merchant_needs_history(env):
+    from kete import report as rep
+
+    paths, conn = env
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))  # all history in one month
+    m = rep.build_report(conn, "month", date(2026, 9, 1), date(2026, 9, 30), "Sep", today=TODAY)
+    assert "new_merchant" not in {f["detector"] for f in m["findings"]}
+
+
+def test_report_render_is_self_contained(tmp_path):
+    from kete import report as rep
+    from kete.demo import build_demo_db
+
+    kind, start, end, label = rep.parse_period(today=TODAY)
+    out = rep.generate(build_demo_db(today=TODAY), tmp_path / "r.html", kind, start, end, label, today=TODAY, demo=True)
+    html = out.read_text()
+    assert "default-src 'none'" in html and "__DATA__" not in html and "/*__SCRIPT__*/" not in html
+    stripped = html.replace("http://www.w3.org/2000/svg", "")
+    assert "http://" not in stripped and "https://" not in stripped
+    assert oct(out.stat().st_mode & 0o777) == "0o600"
+
+
+def test_cli_report_and_dismiss(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from kete.cli import app
+
+    monkeypatch.setenv("KETE_HOME", str(tmp_path / "k"))
+    run = lambda *a: CliRunner().invoke(app, list(a))
+    out = tmp_path / "demo.html"
+    assert run("report", "--demo", "--no-open", "--out", str(out)).exit_code == 0 and out.exists()
+    assert not (tmp_path / "k").exists()  # demo never touches the real data folder
+    assert run("report", "--month", "2026-09", "--year", "2026", "--demo").exit_code != 0
+    run("import", str(FIX / "everyday_2026-09.csv"))
+    assert run("report", "dismiss", "fees:2026-09-01:2026-09-30").exit_code == 0
+    assert run("report", "restore", "fees:2026-09-01:2026-09-30").exit_code == 0
+    r = run("report", "--month", "2026-09", "--json")
+    assert r.exit_code == 0 and json.loads(r.output)["period"]["label"] == "September 2026"

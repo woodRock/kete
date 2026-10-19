@@ -273,13 +273,15 @@ def subscriptions(conn: sqlite3.Connection, min_count: int = 3, today: date | No
                   explain: bool = False) -> list[dict]:
     """Recurring charges: same merchant, similar amount, regular interval.
 
-    With explain=True, returns near-misses too, each with a `reason`."""
+    `today` is the as-of date: later transactions are ignored, so past reports see what was
+    known then. With explain=True, returns near-misses too, each with a `reason`."""
     today = today or date.today()
     groups: dict[str, list] = defaultdict(list)
     names: dict[str, str] = {}
     for r in conn.execute(
         f"""SELECT t.posted_date, t.amount_cents, t.payee, t.category FROM transactions t
-            WHERE t.amount_cents < 0 AND t.pending = 0 AND {NOT_TRANSFER} ORDER BY t.posted_date"""
+            WHERE t.amount_cents < 0 AND t.pending = 0 AND {NOT_TRANSFER} AND t.posted_date <= ?
+            ORDER BY t.posted_date""", (today.isoformat(),)
     ):
         k = payee_key(r["payee"])
         groups[k].append(r)

@@ -1,0 +1,62 @@
+/* Report-specific styles, layered on dashboard/assets/style.css (tokens, cards, tables, tooltip).
+   Diverging pair from the reference palette: blue (less) <-> red (more), gray midpoint. */
+:root { --div-less: #2a78d6; --div-more: #e34948; --div-mid: #c3c2b7; }
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) { --div-less: #3987e5; --div-more: #e66767; --div-mid: #383835; }
+}
+:root[data-theme="dark"] { --div-less: #3987e5; --div-more: #e66767; --div-mid: #383835; }
+
+.finding { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; background: var(--surface);
+  display: grid; grid-template-columns: auto 1fr auto; gap: 4px 12px; align-items: start; }
+.finding + .finding { margin-top: 10px; }
+.finding.dismissed { opacity: 0.55; }
+.finding .sev { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; color: #fff;
+  font-size: 12px; font-weight: 700; margin-top: 1px; }
+.finding.high .sev { background: var(--critical); }
+.finding.medium .sev { background: var(--serious); }
+.finding.low .sev { background: var(--accent); }
+.finding.good .sev { background: var(--good); }
+.finding .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.finding .head strong { font-size: 15px; }
+.finding .sev-label { font-size: 12px; color: var(--muted); }
+.finding .impact { font-size: 13px; color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.finding .body { grid-column: 2 / 4; margin: 0; color: var(--ink-2); font-size: 14px; }
+.finding .tip { grid-column: 2 / 4; margin: 2px 0 0; font-size: 13px; color: var(--ink); }
+.finding details, .finding .actions { grid-column: 2 / 4; }
+.finding details summary { margin-top: 6px; }
+.finding .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.btn { font: inherit; font-size: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+  border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+.btn:hover { color: var(--ink); background: var(--surface-2); }
+.cmd { font-size: 12px; color: var(--ink-2); }
+.cmd code { user-select: all; }
+.show-dismissed { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; color: var(--ink-2); cursor: pointer; }
+.empty-state { text-align: center; padding: 28px 12px; color: var(--ink-2); }
+.empty-state .big { font-size: 28px; }
+
+.div-row { display: grid; grid-template-columns: minmax(100px, 170px) 1fr minmax(150px, auto); align-items: center;
+  gap: 12px; font-size: 13px; padding: 4px 0; border-radius: 6px; }
+.div-row:hover { background: var(--surface-2); }
+.div-row .name { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.div-track { position: relative; height: 14px; }
+.div-track .mid { position: absolute; left: 50%; top: -3px; bottom: -3px; width: 1px; background: var(--div-mid); }
+.div-track .bar { position: absolute; top: 2px; height: 10px; }
+.div-track .bar.more { left: 50%; border-radius: 0 4px 4px 0; background: var(--div-more); }
+.div-track .bar.less { right: 50%; border-radius: 4px 0 0 4px; background: var(--div-less); }
+.div-row .vals { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.div-row .vals span { color: var(--muted); margin-left: 6px; }
+.grow-l { transform-origin: right; animation: growx .6s cubic-bezier(.2,.8,.2,1) both; }
+
+.tax-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.tax-grid .kpi .value { font-size: 24px; }
+td.amt-neg { color: var(--ink); }
+.muted { color: var(--muted); }
+
+@media (max-width: 900px) {
+  .tax-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .div-row { grid-template-columns: 90px 1fr auto; }
+}
+@media print {
+  .finding .actions, .show-dismissed, #finding-filter, #print { display: none !important; }
+  .finding details { display: block; }
+}

@@ -5,13 +5,36 @@ kete is a local-first finance tool. The owner's real data lives in `~/kete` (or 
 ## Privacy rules: read these first
 
 - **Never read, open, query or print anything from `~/kete`**: not `kete.db`, `rules.toml`,
-  `archive/`, `dashboard.html`, and no `kete accounts/tx/spend/sql` or other commands that print
+  `archive/`, `dashboard.html`, `reports/`, and no `kete accounts/tx/spend/sql` or other commands that print
   real data. The owner chose kete so their finances never reach a model.
-- Work against **synthetic data only**: `kete dashboard --demo` and the tests.
+- Work against **synthetic data only**: `kete dashboard --demo`, `kete report --demo` and the tests.
 - Never add network calls, analytics, CDNs or remote fonts. The dashboard's
   Content-Security-Policy (`default-src 'none'`) must stay, and tests check it.
 - Never commit bank exports or databases. `.gitignore` blocks `*.csv`/`*.ofx`/`*.db` outside
   `tests/fixtures/`, and the fixtures are synthetic.
+
+## Reports architecture
+
+```
+kete report [--month 2026-09 | --year 2026 | --tax-year 2026] [--demo] [--json]
+```
+
+| File | Role |
+|---|---|
+| `src/kete/report/detectors.py` | Detectors: `@detector` functions returning `Finding`s |
+| `src/kete/report/__init__.py` | Periods, comparisons, tax interest, assembling the model, rendering |
+| `src/kete/report/assets/report.{html,css,js}` | The page (reuses `dashboard/assets/style.css` tokens) |
+
+To add a detector: write `def my_check(ctx: Context) -> list[Finding]` in `detectors.py` and
+decorate it with `@detector`. Rules for findings:
+
+- Give each one a **stable id** (detector + what it's about, e.g. `price:<merchant>:<date>`), so
+  dismissals stick.
+- List the transactions that justify it in `evidence`.
+- Keep thresholds in `DEFAULT_CONFIG` (overridable from `[report]` in rules.toml).
+- Plant an example in `kete/demo.py` (the "last complete month" block) and assert it in
+  `tests/test_kete.py`.
+- Guard against false positives on short histories: much of the data may start recently.
 
 ## Dashboard architecture
 
