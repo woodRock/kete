@@ -7,7 +7,6 @@ from Westpac One online banking. No credentials, no scraping, no aggregator.
 
 ```sh
 uv sync
-uv run kete accounts add everyday --label "Everyday"
 uv run kete import ~/Downloads/everyday_account.csv ~/Downloads/savings_account.csv
 uv run kete transfers detect          # review proposed Savings -> Everyday pairs
 uv run kete transfers detect --apply
@@ -26,7 +25,8 @@ with ranges overlapping the previous export by about a week.
 
 ## Accounts
 
-Any number of accounts. `savings` and `uber` exist by default; add more with
+Any number of accounts. `everyday`, `savings` and `credit` are built in (created the first time a
+file uses them); add more with
 `kete accounts add joint --label "Joint" --type savings` (types: everyday, savings, credit, loan,
 other). How a file finds its account, in order:
 
@@ -48,7 +48,7 @@ other). How a file finds its account, in order:
 | `kete import [PATHS] [--account KEY]` | Import files (default: inbox). Prints new / duplicate / pending counts |
 | `kete accounts add/edit/remove` | Manage accounts |
 | `kete accounts` | Accounts with newest transaction, age and balance |
-| `kete tx [-a uber] [--from] [--to] [--cat] [-s TEXT] [-u]` | List transactions (`-u` = uncategorised) |
+| `kete tx [-a everyday] [--from] [--to] [--cat] [-s TEXT] [-u]` | List transactions (`-u` = uncategorised) |
 | `kete spend [--month 2026-10] [--by cat\|payee]` | Spending for a month, transfers excluded |
 | `kete cashflow [--months 12]` | Income, spend, net per month |
 | `kete subs [--all]` | Recurring charges |

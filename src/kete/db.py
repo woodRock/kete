@@ -77,8 +77,9 @@ CREATE TABLE IF NOT EXISTS file_mappings (
 
 # Accounts created on first import. Any other filename prefix becomes a new account.
 DEFAULT_ACCOUNTS = {
+    "everyday": ("Everyday", "everyday"),
     "savings": ("Savings", "savings"),
-    "uber": ("Uber", "everyday"),
+    "credit": ("Credit card", "credit"),
 }
 
 

@@ -44,38 +44,38 @@ def test_parse_amount(text, cents):
 
 def test_csv_import_keeps_identical_same_day_rows(env):
     paths, conn = env
-    res = importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
-    assert res.status == "imported" and res.account == "uber"
+    res = importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
+    assert res.status == "imported" and res.account == "everyday"
     assert res.rows_new == 9 and res.rows_dup == 0
     coffees = conn.execute("SELECT COUNT(*) FROM transactions WHERE payee LIKE 'Cafe Express%'").fetchone()[0]
     assert coffees == 2
     # moved from inbox into archive/YYYY with a canonical name
-    assert not (paths.inbox / "uber_2026-09.csv").exists()
-    assert Path(res.archived_to).name == "uber_2026-09-01_2026-09-12.csv"
+    assert not (paths.inbox / "everyday_2026-09.csv").exists()
+    assert Path(res.archived_to).name == "everyday_2026-09-01_2026-09-12.csv"
 
 
 def test_overlapping_reimport_adds_only_new_rows(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
-    res = importer.import_file(conn, paths, copy(paths, "uber_2026-09b.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
+    res = importer.import_file(conn, paths, copy(paths, "everyday_2026-09b.csv"))
     assert (res.rows_new, res.rows_dup) == (2, 4)
     # and the identical file again is skipped outright
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv", "uber_again.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv", "everyday_again.csv"))
     total = conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0]
     assert total == 11
 
 
 def test_identical_file_is_skipped(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
-    res = importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
+    res = importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
     assert res.status == "duplicate-file"
 
 
 def test_explicit_path_outside_inbox_is_copied_not_moved(env, tmp_path):
     paths, conn = env
-    src = tmp_path / "uber_x.csv"
-    shutil.copy(FIX / "uber_2026-09.csv", src)
+    src = tmp_path / "everyday_x.csv"
+    shutil.copy(FIX / "everyday_2026-09.csv", src)
     importer.import_file(conn, paths, src)
     assert src.exists()
 
@@ -86,17 +86,17 @@ def test_unknown_filename_asks_once_and_remembers(env):
 
     def ask(name, choices, suggested):
         asked.append(name)
-        return "uber"
+        return "everyday"
 
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv", "Export_20260912.csv"), ask=ask)
-    res = importer.import_file(conn, paths, copy(paths, "uber_2026-09b.csv", "Export_20261006.csv"), ask=ask)
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv", "Export_20260912.csv"), ask=ask)
+    res = importer.import_file(conn, paths, copy(paths, "everyday_2026-09b.csv", "Export_20261006.csv"), ask=ask)
     assert asked == ["Export_20260912.csv"]
-    assert res.account == "uber" and res.rows_new == 2
+    assert res.account == "everyday" and res.rows_new == 2
 
 
 def test_unknown_filename_without_answer_is_skipped(env):
     paths, conn = env
-    res = importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv", "Export.csv"))
+    res = importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv", "Export.csv"))
     assert res.status == "skipped"
     assert conn.execute("SELECT COUNT(*) FROM transactions").fetchone()[0] == 0
     assert (paths.inbox / "Export.csv").exists()
@@ -104,7 +104,7 @@ def test_unknown_filename_without_answer_is_skipped(env):
 
 def test_raw_row_and_nz_fields_stored(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
     row = conn.execute("SELECT * FROM transactions WHERE payee = 'Mercury Energy'").fetchone()
     assert (row["particulars"], row["code"], row["reference"]) == ("Test User", "A-0000", "13:48-22222")
     assert json.loads(row["raw_json"])["Other Party"] == "Mercury Energy"
@@ -112,7 +112,7 @@ def test_raw_row_and_nz_fields_stored(env):
 
 def test_rules_categorise_and_mark_transfers(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
     cats = dict(conn.execute("SELECT payee, category FROM transactions").fetchall())
     assert cats["NEW WORLD CITY"] == "Groceries"
     assert cats["Uber *eats Help.U 11"] == "Takeaways"
@@ -136,16 +136,16 @@ def test_rules_first_match_wins_and_validate(tmp_path):
 
 def test_transfer_pairing_and_spend_exclusion(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
     importer.import_file(conn, paths, copy(paths, "savings_2026-09.csv"))
     pairs = transfers.detect(conn)
     assert len(pairs) == 1
     p = pairs[0]
-    assert (p["from_account"], p["to_account"], p["amount"]) == ("savings", "uber", 200.0)
+    assert (p["from_account"], p["to_account"], p["amount"]) == ("savings", "everyday", 200.0)
     transfers.apply(conn, pairs)
     # account numbers learned from the payee text of each leg
     nums = dict(conn.execute("SELECT key, number FROM accounts").fetchall())
-    assert nums == {"uber": "0100-0000000-02", "savings": "0100-0000000-01"}
+    assert nums == {"everyday": "0100-0000000-02", "savings": "0100-0000000-01"}
 
     cf = {r["month"]: r for r in queries.cashflow(conn, 120)}["2026-09"]
     assert cf["income"] == pytest.approx(1850.00 + 0.12)  # the $200 top-up is not income
@@ -159,31 +159,31 @@ def test_transfer_pairing_and_spend_exclusion(env):
 
 def test_ofx_matches_account_by_acctid_and_checks_balance(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
     importer.import_file(conn, paths, copy(paths, "savings_2026-09.csv"))
-    transfers.apply(conn, transfers.detect(conn))  # learns uber = 0100-0000000-02
+    transfers.apply(conn, transfers.detect(conn))  # learns everyday = 0100-0000000-02
     res = importer.import_file(conn, paths, copy(paths, "westpac.ofx"))
-    assert res.account == "uber"
+    assert res.account == "everyday"
     # F001 and F002 already exist from the CSV (cross-format match); F003 is new
     assert (res.rows_new, res.rows_dup) == (1, 2)
     assert conn.execute("SELECT fitid FROM transactions WHERE payee LIKE 'Uber *trip%'").fetchone()[0] == "F002"
-    bal = queries.latest_balance(conn, dbmod.find_account(conn, "uber")["id"])
+    bal = queries.latest_balance(conn, dbmod.find_account(conn, "everyday")["id"])
     assert bal["balance"] == 1000.00
 
 
 def test_ofx_reimport_dedupes_on_fitid(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "westpac.ofx", "uber_a.ofx"))
+    importer.import_file(conn, paths, copy(paths, "westpac.ofx", "everyday_a.ofx"))
     text = (FIX / "westpac.ofx").read_text().replace("<NAME>Some Cafe", "<NAME>Some Cafe Ltd")
-    (paths.inbox / "uber_b.ofx").write_text(text)
-    res = importer.import_file(conn, paths, paths.inbox / "uber_b.ofx")
+    (paths.inbox / "everyday_b.ofx").write_text(text)
+    res = importer.import_file(conn, paths, paths.inbox / "everyday_b.ofx")
     assert (res.rows_new, res.rows_dup) == (0, 3)
 
 
 def test_manual_balance_rolls_forward(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
-    uid = dbmod.find_account(conn, "uber")["id"]
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
+    uid = dbmod.find_account(conn, "everyday")["id"]
     conn.execute("INSERT INTO balances VALUES (?, '2026-09-05', 50000, 'manual')", (uid,))
     bal = queries.latest_balance(conn, uid)
     assert bal["balance"] == pytest.approx(500 - 120 - 30 - 23.10)
@@ -191,7 +191,7 @@ def test_manual_balance_rolls_forward(env):
 
 def test_subscriptions_detect_monthly(env):
     paths, conn = env
-    uid = dbmod.get_or_create_account(conn, "uber")
+    uid = dbmod.get_or_create_account(conn, "everyday")
     for i, d in enumerate(["2026-06-05", "2026-07-05", "2026-08-05", "2026-09-04"]):
         conn.execute(
             "INSERT INTO transactions (account_id, posted_date, amount_cents, payee, dedupe_key, source, raw_json)"
@@ -208,8 +208,8 @@ def test_tui_smoke(env, monkeypatch):
     import asyncio
 
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09b.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09b.csv"))
     monkeypatch.setenv("KETE_HOME", str(paths.home))
     from kete.tui import KeteApp
 
@@ -231,7 +231,7 @@ def test_tui_smoke(env, monkeypatch):
 
 def test_transfer_via_untracked_account_is_not_paired(env):
     paths, conn = env
-    s, u = dbmod.get_or_create_account(conn, "savings"), dbmod.get_or_create_account(conn, "uber")
+    s, u = dbmod.get_or_create_account(conn, "savings"), dbmod.get_or_create_account(conn, "everyday")
     rows = [(s, -6000, "To 0100-0000000-00"), (u, 6000, "From 0100-0000000-00")]
     for i, (acct, cents, payee) in enumerate(rows):
         conn.execute(
@@ -242,9 +242,9 @@ def test_transfer_via_untracked_account_is_not_paired(env):
 
 def test_pending_rows_are_replaced_by_next_export(env):
     paths, conn = env
-    a = importer.import_file(conn, paths, copy(paths, "uber_pending_a.csv"))
+    a = importer.import_file(conn, paths, copy(paths, "everyday_pending_a.csv"))
     assert (a.rows_new, a.rows_pending) == (3, 2)
-    b = importer.import_file(conn, paths, copy(paths, "uber_pending_b.csv"))
+    b = importer.import_file(conn, paths, copy(paths, "everyday_pending_b.csv"))
     assert (b.rows_new, b.rows_dup, b.rows_pending) == (2, 1, 0)
     payees = [r[0] for r in conn.execute("SELECT payee FROM transactions ORDER BY posted_date")]
     assert payees == ["Sushi Place 16", "Uber *trip Help.U 17", "Cafe Express 18"]
@@ -278,14 +278,14 @@ def test_unknown_prefix_does_not_create_account(env):
 
 def test_unlabelled_file_matched_by_overlap(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
     importer.import_file(conn, paths, copy(paths, "savings_2026-09.csv"))
 
     def ask(*_):
         raise AssertionError("should not need to ask")
 
-    res = importer.import_file(conn, paths, copy(paths, "uber_2026-09b.csv", "Export_1.csv"), ask=ask)
-    assert res.account == "uber" and res.rows_new == 2
+    res = importer.import_file(conn, paths, copy(paths, "everyday_2026-09b.csv", "Export_1.csv"), ask=ask)
+    assert res.account == "everyday" and res.rows_new == 2
 
 
 def test_shared_filename_pattern_asks_instead_of_guessing(env):
@@ -311,22 +311,22 @@ def test_shared_filename_pattern_asks_instead_of_guessing(env):
 def test_forced_account(env):
     paths, conn = env
     dbmod.get_or_create_account(conn, "joint")
-    f = paths.inbox / "uber_misnamed.csv"
+    f = paths.inbox / "everyday_misnamed.csv"
     f.write_text(_rows(("01/10/2026", "-5.00", "Shop")))
     assert importer.import_file(conn, paths, f, account="joint").account == "joint"
 
 
 def test_transfers_across_three_accounts(env):
     paths, conn = env
-    ids = {k: dbmod.get_or_create_account(conn, k) for k in ("savings", "uber", "joint")}
+    ids = {k: dbmod.get_or_create_account(conn, k) for k in ("savings", "everyday", "joint")}
     rows = [("savings", -5000, "To 0100-0000000-03"), ("joint", 5000, "From 0100-0000000-01"),
-            ("uber", -2000, "To 0100-0000000-01"), ("savings", 2000, "From 0100-0000000-02")]
+            ("everyday", -2000, "To 0100-0000000-01"), ("savings", 2000, "From 0100-0000000-02")]
     for n, (k, cents, payee) in enumerate(rows):
         conn.execute(
             "INSERT INTO transactions (account_id, posted_date, amount_cents, payee, dedupe_key, source, raw_json)"
             " VALUES (?, '2026-10-01', ?, ?, ?, 'test', '{}')", (ids[k], cents, payee, f"t{n}"))
     pairs = transfers.detect(conn)
-    assert {(p["from_account"], p["to_account"]) for p in pairs} == {("savings", "joint"), ("uber", "savings")}
+    assert {(p["from_account"], p["to_account"]) for p in pairs} == {("savings", "joint"), ("everyday", "savings")}
 
 
 def test_cli_account_commands(tmp_path, monkeypatch):
@@ -337,8 +337,8 @@ def test_cli_account_commands(tmp_path, monkeypatch):
     run = lambda *a: CliRunner().invoke(app, list(a))
     assert run("accounts", "add", "joint", "--type", "savings").exit_code == 0
     assert run("accounts", "add", "joint").exit_code == 1
-    assert run("import", "-a", "nope", str(FIX / "uber_2026-09.csv")).exit_code == 1
-    assert run("import", "-a", "joint", str(FIX / "uber_2026-09.csv")).exit_code == 0
+    assert run("import", "-a", "nope", str(FIX / "everyday_2026-09.csv")).exit_code == 1
+    assert run("import", "-a", "joint", str(FIX / "everyday_2026-09.csv")).exit_code == 0
     assert run("accounts", "edit", "joint", "--rename", "shared", "--number", "0100-0000000-09").exit_code == 0
     assert run("accounts", "add", "other", "--number", "0100-0000000-09").exit_code == 1
     assert run("accounts", "remove", "shared").exit_code == 1  # has transactions
@@ -350,7 +350,7 @@ def test_tui_back_from_category_drilldown(env, monkeypatch):
     import asyncio
 
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
     monkeypatch.setenv("KETE_HOME", str(paths.home))
     from kete.tui import KeteApp
 
@@ -376,7 +376,7 @@ def test_tui_back_from_category_drilldown(env, monkeypatch):
 
 def test_canonical_category_and_rule_spellings(env, tmp_path):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
     known = rules.known_categories(conn, rules.load_rules(paths.rules))
     assert "Fees" in known  # rule-only category (no matching transactions) is suggested
     assert rules.canonical_category("  groceries ", known) == "Groceries"
@@ -388,7 +388,7 @@ def test_canonical_category_and_rule_spellings(env, tmp_path):
 
 def test_rename_category_updates_transactions_and_rules_file(env):
     paths, conn = env
-    importer.import_file(conn, paths, copy(paths, "uber_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
     conn.execute("UPDATE transactions SET category='groceries', category_source='manual' "
                  "WHERE payee LIKE 'Cafe Express%'")
     conn.commit()
@@ -415,7 +415,7 @@ def test_cli_categories(tmp_path, monkeypatch):
 
     monkeypatch.setenv("KETE_HOME", str(tmp_path / "k"))
     run = lambda *a: CliRunner().invoke(app, list(a))
-    run("import", str(FIX / "uber_2026-09.csv"))
+    run("import", str(FIX / "everyday_2026-09.csv"))
     data = {d["category"]: d for d in json.loads(run("categories", "--json").output)}
     assert data["Groceries"]["transactions"] == 1 and data["Groceries"]["rules"] == 1
     assert run("categories", "rename", "Groceries", "Supermarket").exit_code == 0

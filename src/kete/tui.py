@@ -121,7 +121,7 @@ class KeteApp(App):
                     yield DataTable(id="cashflow-table", cursor_type="none", zebra_stripes=True)
             with TabPane("2 Transactions", id="transactions"):
                 yield Input(id="tx-filter",
-                            placeholder="Filter: text, account:uber, cat:Groceries, month:2026-10, "
+                            placeholder="Filter: text, account:everyday, cat:Groceries, month:2026-10, "
                                         "from:2026-01-01, to:…, uncat")
                 yield DataTable(id="tx-table", cursor_type="row", zebra_stripes=True)
             with TabPane("3 Categories", id="categories"):
