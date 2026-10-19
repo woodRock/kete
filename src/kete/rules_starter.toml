@@ -75,3 +75,11 @@ category = "Eating out"
 name = "Bank fees"
 payee = ["foreign currency fee", "account fee"]
 category = "Fees"
+
+# Dashboard settings (kete dashboard). Uncomment to change the defaults.
+# [dashboard]
+# discretionary = ["Takeaways", "Eating out", "Entertainment", "Shopping", "Transport"]
+# fixed_costs = ["Rent", "Mortgage", "Utilities", "Insurance", "Groceries", "Health"]
+# default_cut = 0.25
+# interest_rate = 0.03
+# savings_goal = 0

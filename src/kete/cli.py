@@ -498,6 +498,39 @@ def balance_set(
     console.print(f"{acct['key']}: {_money(amount)} at end of {as_of}")
 
 
+# --------------------------------------------------------------------------- dashboard
+
+
+@app.command()
+def dashboard(
+    out: Optional[Path] = typer.Option(None, "--out", "-o", help="Where to write the HTML file."),
+    open_: bool = typer.Option(True, "--open/--no-open", help="Open it in your browser."),
+    demo: bool = typer.Option(False, "--demo", help="Use synthetic data (for previews and agents)."),
+    as_json: bool = typer.Option(False, "--json", help="Print the data model instead of writing HTML."),
+):
+    """Build the local HTML dashboard: trends, patterns, where to cut, and savings projections."""
+    import tempfile
+    import webbrowser
+
+    from . import dashboard as dash
+
+    paths = get_paths()
+    if demo:
+        from .demo import build_demo_db
+
+        conn, rules_path = build_demo_db(), None
+        out = out or Path(tempfile.gettempdir()) / "kete-demo" / "dashboard.html"
+    else:
+        conn, rules_path = _open(), paths.rules
+        out = out or paths.home / "dashboard.html"
+    if as_json:
+        return _emit_json(dash.build_model(conn, dash.load_config(rules_path), demo=demo))
+    path = dash.generate(conn, out, rules_path, demo=demo)
+    console.print(f"Dashboard written to {path}")
+    if open_:
+        webbrowser.open(path.resolve().as_uri())
+
+
 # --------------------------------------------------------------------------- tui
 
 

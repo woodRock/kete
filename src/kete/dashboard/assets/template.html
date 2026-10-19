@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- No network access at all: the page can only use what is inlined below. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>kete dashboard</title>
+<style>/*__STYLE__*/</style>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <div>
+      <h1>kete</h1>
+      <p class="sub" id="period"></p>
+    </div>
+  </div>
+  <nav aria-label="Sections">
+    <a href="#overview">Overview</a>
+    <a href="#spending">Spending</a>
+    <a href="#trends">Trends</a>
+    <a href="#patterns">Patterns</a>
+    <a href="#cut">Where to cut</a>
+    <a href="#projection">Projection</a>
+  </nav>
+  <button class="theme" id="theme" type="button" aria-label="Toggle colour theme">◐</button>
+</header>
+
+<main>
+  <div class="banner" id="demo-banner" hidden>Demo data. Run <code>kete dashboard</code> for your own numbers.</div>
+
+  <section id="overview" class="reveal">
+    <div class="kpis" id="kpis"></div>
+    <div class="insights" id="insights"></div>
+  </section>
+
+  <section id="spending" class="card reveal">
+    <div class="card-head">
+      <div>
+        <h2>Where your money goes</h2>
+        <p class="hint">Monthly spending by category. Transfers between your accounts are excluded. Click a month for its breakdown.</p>
+      </div>
+      <div class="seg" role="tablist" aria-label="Chart view">
+        <button type="button" role="tab" aria-selected="true" data-view="categories">Categories</button>
+        <button type="button" role="tab" aria-selected="false" data-view="cashflow">Income vs spend</button>
+      </div>
+    </div>
+    <div class="legend" id="legend"></div>
+    <div class="chart" id="monthly-chart"></div>
+    <div class="split">
+      <div>
+        <h3 id="breakdown-title"></h3>
+        <div id="breakdown"></div>
+      </div>
+      <div>
+        <h3>Notes</h3>
+        <ul class="notes" id="month-notes"></ul>
+      </div>
+    </div>
+    <details><summary>Show as table</summary><div id="monthly-table"></div></details>
+  </section>
+
+  <section id="trends" class="card reveal">
+    <div class="card-head">
+      <div>
+        <h2>Trends</h2>
+        <p class="hint" id="trend-hint"></p>
+      </div>
+    </div>
+    <div id="trend-table"></div>
+  </section>
+
+  <section id="patterns" class="reveal">
+    <div class="grid2">
+      <div class="card">
+        <h2>Spending calendar</h2>
+        <p class="hint" id="heatmap-hint">Daily spending over the last six months. Darker days cost more.</p>
+        <div class="chart" id="heatmap"></div>
+      </div>
+      <div class="card">
+        <h2>By day of week</h2>
+        <p class="hint" id="weekday-hint">Average spend per day, by posting date.</p>
+        <div class="chart" id="weekday"></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Top merchants</h2>
+      <p class="hint" id="merchant-hint"></p>
+      <div id="merchants"></div>
+    </div>
+  </section>
+
+  <section id="cut" class="card reveal">
+    <div class="card-head">
+      <div>
+        <h2>Where to cut</h2>
+        <p class="hint">Suggestions from your own spending. Tick the ones you'd try and adjust how much; the projection updates.</p>
+      </div>
+      <div class="total-pill" id="savings-total" aria-live="polite"></div>
+    </div>
+    <div id="opportunities"></div>
+    <h3 class="subhead">Subscriptions</h3>
+    <div id="subscriptions"></div>
+  </section>
+
+  <section id="projection" class="card reveal">
+    <div class="card-head">
+      <div>
+        <h2>Projection</h2>
+        <p class="hint" id="projection-hint"></p>
+      </div>
+      <div class="controls">
+        <label>Horizon
+          <select id="horizon">
+            <option value="12">1 year</option>
+            <option value="24" selected>2 years</option>
+            <option value="36">3 years</option>
+            <option value="60">5 years</option>
+          </select>
+        </label>
+        <label>Interest
+          <span class="input-suffix"><input id="rate" type="number" min="0" max="20" step="0.25"><span>%</span></span>
+        </label>
+      </div>
+    </div>
+    <div class="legend" id="projection-legend"></div>
+    <div class="chart" id="projection-chart"></div>
+    <p class="summary" id="projection-summary"></p>
+    <details><summary>Show as table</summary><div id="projection-table"></div></details>
+  </section>
+</main>
+
+<footer>
+  <ul id="quality"></ul>
+  <p>Generated locally by kete on <span id="generated"></span>. This file makes no network requests and contains your financial data; keep it private.</p>
+</footer>
+
+<div class="tooltip" id="tooltip" role="status" hidden></div>
+<script type="application/json" id="kete-data">__DATA__</script>
+<script>/*__SCRIPT__*/</script>
+</body>
+</html>

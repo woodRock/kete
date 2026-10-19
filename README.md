@@ -58,12 +58,40 @@ other). How a file finds its account, in order:
 | `kete balance set ACCOUNT AMOUNT [--as-of]` | Anchor a balance (CSV exports carry none) |
 | `kete stale [--days 30]` | Accounts that need a fresh export (exit code 2 if any) |
 | `kete sql "SELECT …"` | Read-only SQL |
-| `kete tui` | Dashboard: Overview, Transactions, Categories, Uncategorised, Import log |
+| `kete dashboard [--demo] [--no-open] [--out FILE]` | Build and open the local HTML dashboard |
+| `kete tui` | Terminal UI: Overview, Transactions, Categories, Uncategorised, Import log |
 
 Every read command takes `--json`.
 
-TUI keys: `1`–`5` tabs, `c` set category, `t` toggle transfer, `n` create a rule from the payee,
+TUI keys: `d` open the dashboard, `1`–`5` tabs, `c` set category, `t` toggle transfer, `n` create a rule from the payee,
 `o` raw row, `[`/`]` change month on Categories, Enter drills down, `r` refresh, `q` quit.
+
+## Dashboard
+
+`kete dashboard` writes `~/kete/dashboard.html` and opens it in your browser (`d` in the TUI does
+the same). It covers:
+- spending by category per month, with a breakdown for any month;
+- trends against your own baseline;
+- patterns: a spending calendar, day of week, top merchants and frequent small purchases;
+- **Where to cut**: suggestions you can tick and adjust, with live monthly and yearly savings;
+- a **savings projection** comparing your current path with your chosen changes.
+
+Everything is computed on your machine. The file is a single page with no network access
+(enforced by a Content-Security-Policy) and is saved with owner-only permissions.
+
+Tune it in `rules.toml`:
+
+```toml
+[dashboard]
+discretionary = ["Takeaways", "Eating out", "Entertainment", "Shopping", "Transport"]
+fixed_costs = ["Rent", "Utilities", "Groceries", "Insurance"]
+default_cut = 0.25       # suggested cut for discretionary categories
+interest_rate = 0.03     # used by the projection
+savings_goal = 10000     # draws a goal line; 0 = none
+```
+
+`kete dashboard --demo` shows the same page with synthetic data. Agents changing the
+dashboard should use it, and read [AGENTS.md](AGENTS.md).
 
 ## What the Westpac CSV looks like (verified Oct 2026)
 

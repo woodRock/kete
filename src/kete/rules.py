@@ -88,10 +88,14 @@ def ensure_rules_file(path: Path) -> None:
 def load_rules(path: Path) -> list[Rule]:
     if not path.exists():
         return []
+    return parse_rules(path.read_text(), str(path))
+
+
+def parse_rules(text: str, source: str = "rules.toml") -> list[Rule]:
     try:
-        data = tomllib.loads(path.read_text())
+        data = tomllib.loads(text)
     except tomllib.TOMLDecodeError as e:
-        raise RulesError(f"{path}: {e}") from e
+        raise RulesError(f"{source}: {e}") from e
     out = []
     for i, r in enumerate(data.get("rule", []), start=1):
         unknown = set(r) - CONDITION_KEYS - {"name", "category", "transfer", "regex"}

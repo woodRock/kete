@@ -421,3 +421,70 @@ def test_cli_categories(tmp_path, monkeypatch):
     assert run("categories", "rename", "Groceries", "Supermarket").exit_code == 0
     assert run("categories", "rename", "Nope", "X").exit_code == 1
     assert "Supermarket" in run("categories").output
+
+
+# --------------------------------------------------------------------------- dashboard
+
+
+def test_dashboard_demo_model_shape():
+    from kete.dashboard import build_model
+    from kete.demo import build_demo_db
+
+    m = build_model(build_demo_db(today=date(2026, 10, 19)), today=date(2026, 10, 19), demo=True)
+    assert m["demo"] and len(m["monthly"]) == 12 and m["monthly"][-1]["status"] == "partial"
+    assert len(m["series"]) <= 8 and len(m["daily"]) % 7 in range(7)
+    assert m["kpis"]["avg_monthly_spend"] > 0 and m["kpis"]["savings_rate"] is not None
+    kinds = {o["kind"] for o in m["opportunities"]}
+    assert {"cut", "cancel"} <= kinds
+    # transfers never count as spending, and fixed costs are never "subscriptions to cancel"
+    assert "Transfer" not in m["series"]
+    assert all(s["category"] not in ("Rent", "Groceries") for s in m["subscriptions"])
+    # category totals reconcile with monthly spend
+    for mo in m["monthly"]:
+        assert sum(mo["by_category"].values()) == pytest.approx(mo["spend"], abs=0.05)
+        assert sum(mo["by_series"].values()) == pytest.approx(mo["spend"], abs=0.05)
+
+
+def test_dashboard_render_is_self_contained(tmp_path):
+    from kete.dashboard import generate
+    from kete.demo import build_demo_db
+
+    out = generate(build_demo_db(), tmp_path / "d.html", demo=True)
+    html = out.read_text()
+    assert "default-src 'none'" in html  # CSP: no network
+    assert "__DATA__" not in html and "/*__SCRIPT__*/" not in html
+    stripped = html.replace("http://www.w3.org/2000/svg", "")  # a namespace name, never fetched
+    assert not any(x in stripped for x in ("http://", "https://", "src=\"//")), "no external resources"
+    assert oct(out.stat().st_mode & 0o777) == "0o600"
+
+
+def test_dashboard_escapes_script_breakout(env, tmp_path):
+    from kete.dashboard import generate
+
+    paths, conn = env
+    f = paths.inbox / "everyday_x.csv"
+    f.write_text('Date,Amount,Other Party,Description,Reference,Particulars,Analysis Code\n'
+                 '01/10/2026,-5.00,"</script><script>alert(1)</script>","DEBIT",,,\n')
+    importer.import_file(conn, paths, f)
+    html = generate(conn, tmp_path / "d.html").read_text()
+    assert "</script><script>alert(1)" not in html
+
+
+def test_dashboard_config_from_rules_toml(tmp_path):
+    from kete.dashboard import load_config
+
+    p = tmp_path / "rules.toml"
+    p.write_text('[dashboard]\ninterest_rate = 0.05\ndiscretionary = ["Fun"]\nunknown = 1\n')
+    cfg = load_config(p)
+    assert cfg["interest_rate"] == 0.05 and cfg["discretionary"] == ["Fun"] and "unknown" not in cfg
+
+
+def test_cli_dashboard_demo(tmp_path, monkeypatch):
+    from typer.testing import CliRunner
+    from kete.cli import app
+
+    monkeypatch.setenv("KETE_HOME", str(tmp_path / "k"))
+    out = tmp_path / "demo.html"
+    r = CliRunner().invoke(app, ["dashboard", "--demo", "--no-open", "--out", str(out)])
+    assert r.exit_code == 0 and out.exists()
+    assert not (tmp_path / "k").exists()  # demo never touches the real data folder

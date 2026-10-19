@@ -94,6 +94,7 @@ class KeteApp(App):
         Binding("t", "toggle_transfer", "Transfer"),
         Binding("n", "new_rule", "Rule from payee"),
         Binding("o", "open_raw", "Raw row"),
+        Binding("d", "dashboard", "Dashboard"),
         Binding("left_square_bracket", "month(-1)", "Prev month", show=False),
         Binding("right_square_bracket", "month(1)", "Next month", show=False),
     ]
@@ -322,6 +323,15 @@ class KeteApp(App):
             "SELECT id, payee, category, is_transfer, transfer_pair_id FROM transactions WHERE id = ?",
             (int(key),)).fetchone()
         return dict(row) if row else None
+
+    def action_dashboard(self) -> None:
+        import webbrowser
+
+        from . import dashboard as dash
+
+        path = dash.generate(self.conn, self.paths.home / "dashboard.html", self.paths.rules)
+        webbrowser.open(path.resolve().as_uri())
+        self.notify(f"Dashboard opened: {path}")
 
     def action_open_raw(self) -> None:
         tx = self._selected_tx()
