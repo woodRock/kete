@@ -560,3 +560,33 @@ def test_dashboard_lists_bills_but_not_rent():
     assert "Harbour Property" not in subs  # rent is recurring but never "cancellable"
     assert subs["One NZ Mobile"]["bill"] and not subs["Netflix.com"]["bill"]
     assert "Spotify" in subs and "CityGym Membership" in subs
+
+
+def test_tui_change_month_keys_and_buttons(env, monkeypatch):
+    import asyncio
+
+    paths, conn = env
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
+    monkeypatch.setenv("KETE_HOME", str(paths.home))
+    from kete.tui import KeteApp
+
+    async def run():
+        app = KeteApp()
+        app.cat_month = "2026-10"
+        async with app.run_test(size=(140, 40)) as pilot:
+            await pilot.press("2")
+            app.query_one("#tx-filter").focus()  # focus left in another tab's filter box
+            await pilot.click("#tabs-list Tab#--content-tab-categories")
+            await pilot.pause()
+            assert app.focused.id == "cat-table"
+            await pilot.press("left_square_bracket")
+            assert app.cat_month == "2026-09"
+            assert app.query_one("#tx-filter").value == ""
+            await pilot.click("#next-month")
+            await pilot.pause()
+            assert app.cat_month == "2026-10"
+            await pilot.click("#prev-month")
+            await pilot.pause()
+            assert app.cat_month == "2026-09"
+            assert app.query_one("#cat-table").row_count > 0
+    asyncio.run(run())

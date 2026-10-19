@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from textual import on
 from textual.app import App, ComposeResult
@@ -10,7 +11,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import ModalScreen
 from textual.suggester import SuggestFromList
-from textual.widgets import (DataTable, Footer, Header, Input, Label, Sparkline, Static,
+from textual.widgets import (Button, DataTable, Footer, Header, Input, Label, Sparkline, Static,
                              TabbedContent, TabPane)
 
 from . import db as dbmod
@@ -68,6 +69,9 @@ class RawRow(ModalScreen[None]):
         self.dismiss(None)
 
 
+TAB_TABLES = {"transactions": "#tx-table", "categories": "#cat-table",
+              "uncategorised": "#uncat-table", "imports": "#imports-table"}
+
 TX_COLUMNS = ("Date", "Account", "Amount", "Payee", "Type", "Particulars", "Code", "Reference", "Category")
 
 
@@ -78,7 +82,9 @@ class KeteApp(App):
     .section { margin-top: 1; text-style: bold; }
     #spark { height: 3; margin: 0 0 1 0; }
     #accounts-table, #cashflow-table { height: auto; max-height: 16; }
-    #cat-header { height: 1; padding: 0 1; }
+    #cat-bar { height: 1; margin: 0 0 1 0; }
+    #cat-bar Button { min-width: 5; }
+    #cat-header { width: 1fr; padding: 0 1; }
     #tx-filter { margin: 0 0 1 0; }
     """
     BINDINGS = [
@@ -95,8 +101,8 @@ class KeteApp(App):
         Binding("n", "new_rule", "Rule from payee"),
         Binding("o", "open_raw", "Raw row"),
         Binding("d", "dashboard", "Dashboard"),
-        Binding("left_square_bracket", "month(-1)", "Prev month", show=False),
-        Binding("right_square_bracket", "month(1)", "Next month", show=False),
+        Binding("left_square_bracket", "month(-1)", "Prev month"),
+        Binding("right_square_bracket", "month(1)", "Next month"),
     ]
 
     def __init__(self) -> None:
@@ -126,7 +132,10 @@ class KeteApp(App):
                                         "from:2026-01-01, to:…, uncat")
                 yield DataTable(id="tx-table", cursor_type="row", zebra_stripes=True)
             with TabPane("3 Categories", id="categories"):
-                yield Static(id="cat-header")
+                with Horizontal(id="cat-bar"):
+                    yield Button("‹ Prev", id="prev-month", compact=True)
+                    yield Static(id="cat-header")
+                    yield Button("Next ›", id="next-month", compact=True)
                 yield DataTable(id="cat-table", cursor_type="row", zebra_stripes=True)
             with TabPane("4 Uncategorised", id="uncategorised"):
                 yield Static("c set category · n create a rule from this payee · t mark as transfer · o raw row",
@@ -235,9 +244,10 @@ class KeteApp(App):
 
     def load_categories(self) -> None:
         data = queries.spend(self.conn, self.cat_month)
+        label = datetime.strptime(data["month"], "%Y-%m").strftime("%B %Y")
         self.query_one("#cat-header", Static).update(
-            f"[b]{data['month']}[/]  total {money(data['total'])}   "
-            "[dim]\\[ / ] change month · Enter shows transactions[/]")
+            f"[b]{label}[/]  total {money(data['total'])}   "
+            "[dim]\\[ and ] change month · Enter shows transactions[/]")
         t = self.query_one("#cat-table", DataTable)
         t.clear()
         total = data["total"] or 1
@@ -274,11 +284,26 @@ class KeteApp(App):
         if self.drilled and event.pane.id != "transactions":
             self.drilled = False
             self.query_one("#tx-filter", Input).value = ""
-            self.refresh_bindings()
+        # Clicking a tab leaves focus on the tab strip (or a hidden filter box, which would
+        # swallow keys like [ and ]); put it on the tab's table instead.
+        target = TAB_TABLES.get(event.pane.id)
+        if target:
+            self.query_one(target).focus()
+        self.refresh_bindings()
+
+    @on(Button.Pressed, "#prev-month")
+    def prev_month(self) -> None:
+        self.action_month(-1)
+
+    @on(Button.Pressed, "#next-month")
+    def next_month(self) -> None:
+        self.action_month(1)
 
     def check_action(self, action: str, parameters: tuple) -> bool | None:
         if action == "back":
             return self.drilled  # only shown in the footer after a drill-down
+        if action == "month":  # only on the Categories tab, so the footer shows it there
+            return self.query_one(TabbedContent).active == "categories"
         return True
 
     def action_back(self) -> None:
@@ -292,8 +317,7 @@ class KeteApp(App):
 
     def action_tab(self, tab: str) -> None:
         self.query_one(TabbedContent).active = tab
-        target = {"transactions": "#tx-table", "categories": "#cat-table",
-                  "uncategorised": "#uncat-table", "imports": "#imports-table"}.get(tab)
+        target = TAB_TABLES.get(tab)
         if target:
             self.query_one(target).focus()
 
