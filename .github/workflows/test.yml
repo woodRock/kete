@@ -1,0 +1,46 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Tests (includes the no-network guards)
+        run: uv run --python ${{ matrix.python }} pytest -q
+
+  no-personal-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: No bank exports or databases outside tests/fixtures
+        run: |
+          bad=$(git ls-files | grep -Ei '\.(csv|ofx|qfx|qif|db|sqlite3?)$' | grep -v '^tests/fixtures/' || true)
+          if [ -n "$bad" ]; then
+            echo "These files look like personal financial data and must not be committed:"
+            echo "$bad"
+            exit 1
+          fi
+      - name: No real account numbers in fixtures
+        run: |
+          # Synthetic fixtures use 0100-0000000-xx; any other account number is suspicious.
+          bad=$(git grep -ohE '([0-9]{2}-)?[0-9]{4}-[0-9]{7}-[0-9]{2,3}' -- tests/fixtures | grep -v -- '-0000000-' || true)
+          if [ -n "$bad" ]; then
+            echo "Fixtures contain account numbers that don't look synthetic:"
+            echo "$bad"
+            exit 1
+          fi

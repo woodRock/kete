@@ -29,6 +29,10 @@ class Paths:
     def rules(self) -> Path:
         return self.home / "rules.toml"
 
+    @property
+    def formats(self) -> Path:
+        return self.home / "formats.toml"
+
     def ensure(self) -> None:
         for d in (self.home, self.inbox, self.archive):
             d.mkdir(parents=True, exist_ok=True)

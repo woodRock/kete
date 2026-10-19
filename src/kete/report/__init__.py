@@ -30,8 +30,10 @@ DEFAULT_CONFIG = {
     "duplicate_min": 15.0,  # identical charges below this aren't flagged (two coffees)
     "uncategorised_share": 10.0,  # percent of spending
     "good_savings_rate": 20.0,  # percent
+    # Categories whose payments count towards the NZ donation tax credit (IR526).
+    "donation_categories": ["Donations"],
     # Recurring but never a "subscription" (same default as the dashboard's list).
-    "not_subscriptions": ["Rent", "Mortgage", "Rates", "Loan", "Groceries", "Childcare"],
+    "not_subscriptions": ["Rent", "Mortgage", "Rates", "Loan", "Groceries", "Childcare", "Donations"],
 }
 
 __all__ = ["DETECTORS", "DEFAULT_CONFIG", "Finding", "build_report", "generate", "load_config",
@@ -113,12 +115,37 @@ def _tax_interest(conn: sqlite3.Connection, start: date, end: date) -> dict:
     return {"payments": len(rows), "gross": round(gross, 2), "rwt": round(rwt, 2), "net": round(net, 2)}
 
 
+DONATION_MIN = 5.0  # IR526: each receipt must be $5 or more
+DONATION_RATE = 1 / 3  # the credit is 33⅓% of eligible donations (capped at your taxable income)
+
+
+def _donations(conn: sqlite3.Connection, start: date, end: date, categories: list[str]) -> dict:
+    """Payments in the donation categories, for the IR526 claim (needs the charities' receipts)."""
+    cats = [c.lower() for c in categories]
+    if not cats:
+        return {"count": 0, "total": 0.0, "eligible": 0.0, "credit": 0.0, "items": [], "categories": []}
+    rows = conn.execute(
+        f"""SELECT t.id, t.posted_date, -(t.amount_cents + t.shared_cents) AS c, t.payee, t.category, a.key AS account
+            FROM transactions t JOIN accounts a ON a.id = t.account_id
+            WHERE lower(t.category) IN ({",".join("?" * len(cats))}) AND t.amount_cents < 0
+              AND t.posted_date BETWEEN ? AND ? ORDER BY t.posted_date""",
+        (*cats, start.isoformat(), end.isoformat())).fetchall()
+    items = [{"id": r["id"], "date": r["posted_date"], "payee": r["payee"], "account": r["account"],
+              "category": r["category"], "amount": -round(r["c"] / 100, 2), "eligible": r["c"] / 100 >= DONATION_MIN}
+             for r in rows if r["c"] > 0]
+    total = -sum(i["amount"] for i in items)
+    eligible = -sum(i["amount"] for i in items if i["eligible"])
+    return {"count": len(items), "total": round(total, 2), "eligible": round(eligible, 2),
+            "credit": round(eligible * DONATION_RATE, 2), "items": items, "categories": categories}
+
+
 def _load_txns(conn: sqlite3.Connection, end: date) -> list[dict]:
     return [dict(r) for r in conn.execute(
-        """SELECT t.id, t.posted_date AS d, t.amount_cents AS c, t.payee,
+        """SELECT t.id, t.posted_date AS d, t.amount_cents + t.shared_cents AS c, t.payee,
                   COALESCE(t.category, 'Uncategorised') AS cat, a.key AS account
            FROM transactions t JOIN accounts a ON a.id = t.account_id
            WHERE t.is_transfer = 0 AND t.transfer_pair_id IS NULL AND t.posted_date <= ?
+             AND t.amount_cents + t.shared_cents != 0
            ORDER BY t.posted_date, t.id""", (end.isoformat(),))]
 
 
@@ -204,6 +231,7 @@ def build_report(conn: sqlite3.Connection, kind: str, start: date, end: date, la
         "monthly": monthly,
         "largest": [_txn(t) for t in largest],
         "tax": _tax_interest(conn, start, end) if kind in ("year", "tax-year") else None,
+        "donations": _donations(conn, start, end, cfg["donation_categories"]) if kind == "tax-year" else None,
         "findings": findings,
         "detectors": [fn.__name__ for fn in DETECTORS],
         "config": cfg,

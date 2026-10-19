@@ -250,6 +250,30 @@
     tile("Tax withheld (RWT)", money(t.rwt, 2));
     tile("Paid into your accounts", money(t.net, 2));
     tile("Interest payments", String(t.payments));
+    renderDonations();
+  }
+
+  function renderDonations() {
+    const d = R.donations;
+    if (!d) return;
+    const root = clear($("donations"));
+    root.hidden = false;
+    root.append(h("h3", { text: "Donation tax credit" }));
+    if (!d.count) {
+      root.append(h("p", { class: "hint", text: `No payments categorised as ${d.categories.join(" or ") || "donations"} this tax year. ` +
+        "Categorise donations to approved charities to total them here for your IR526 claim." }));
+      return;
+    }
+    const grid = h("div", { class: "tax-grid" });
+    const tile = (label, v) => grid.append(h("div", { class: "kpi" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: v })));
+    tile("Donations", money(d.total, 2));
+    tile("Receipts of $5 or more", money(d.eligible, 2));
+    tile("Credit to claim (33⅓%)", money(d.credit, 2));
+    tile("Payments", String(d.count));
+    root.append(grid,
+      h("p", { class: "hint", text: "Claim with an IR526 form; you need a receipt from each approved donee organisation. " +
+        "The credit can't exceed your taxable income." }),
+      h("details", {}, h("summary", { text: "Show the donations" }), h("div", { style: "overflow-x:auto" }, evidenceTable(d.items))));
   }
 
   function renderLargest() {

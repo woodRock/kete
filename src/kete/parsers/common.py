@@ -31,6 +31,7 @@ class Statement:
     balance_cents: int | None = None  # closing (ledger) balance
     balance_date: date | None = None
     warnings: list[str] = field(default_factory=list)
+    source: str | None = None  # e.g. "visa-csv" for a saved format; default westpac-<format>
 
     @property
     def date_from(self) -> date | None:

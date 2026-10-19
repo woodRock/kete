@@ -72,6 +72,12 @@ payee = ["cafe", "subway", "mcdonalds", "kfc", "burger king", "dairy", "bakery",
 category = "Eating out"
 
 [[rule]]
+# Totalled in `kete report --tax-year` for the donation tax credit (IR526).
+name = "Donations"
+any = ["donation"]
+category = "Donations"
+
+[[rule]]
 name = "Bank fees"
 payee = ["foreign currency fee", "account fee"]
 category = "Fees"
@@ -91,3 +97,9 @@ category = "Fees"
 # unusual_multiple = 2.5
 # large_new_merchant = 150
 # duplicate_min = 15
+# donation_categories = ["Donations"]
+
+# Pay cycle (kete cycle, TUI overview). kete finds your pay on its own; set these to override.
+# [paycycle]
+# payee = "Your Employer"
+# save_per_cycle = 0

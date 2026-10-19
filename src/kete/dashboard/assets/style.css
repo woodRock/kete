@@ -224,3 +224,12 @@ footer ul { padding-left: 18px; margin: 0 0 8px; }
   .reveal { opacity: 1; transform: none; }
   .card, .kpi { box-shadow: none; break-inside: avoid; }
 }
+
+/* Period picker and year-earlier markers in the breakdown */
+.period-bar { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; margin-bottom: 12px; font-size: 13px; color: var(--ink-2); }
+.period-bar select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; }
+.period-bar .check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.track { position: relative; }
+.track .was { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink); border-radius: 1px; opacity: .75; }
+.amt .was-txt { color: var(--muted); margin-left: 6px; }
+#breakdown-compare { margin: -4px 0 10px; }

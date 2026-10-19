@@ -17,6 +17,7 @@ from . import rules as rules_mod
 from .db import DEFAULT_ACCOUNTS, get_or_create_account, mask_number
 from .parsers import ParseError, Statement, Txn, parse_file
 from .parsers.common import normalise_text
+from .parsers.formats import load_formats
 from .paths import Paths
 
 # ask(filename, existing account keys, suggested key) -> account key, or None to skip the file.
@@ -197,7 +198,7 @@ def _cross_format_match(
 def _insert_statement(
     conn: sqlite3.Connection, account_id: int, st: Statement, fmt: str, import_id: int
 ) -> tuple[list[int], int]:
-    source = f"westpac-{fmt}"
+    source = st.source or f"westpac-{fmt}"
     # Pending rows are provisional: this export is the latest word on every day it covers.
     if st.date_from is not None:
         conn.execute(
@@ -303,7 +304,7 @@ def import_file(
         res.warnings.append(f"identical file already imported at {prior['imported_at']}")
         return res
     try:
-        fmt, statements = parse_file(path)
+        fmt, statements = parse_file(path, load_formats(paths.formats))
     except ParseError as e:
         res.status, res.error = "error", str(e)
         return res
@@ -337,7 +338,7 @@ def import_file(
             res.rows_new += len(new_ids)
             res.rows_dup += dups
             res.rows_pending += sum(t.pending for t in st.txns)
-            warning = _record_balance(conn, account_id, st, f"westpac-{fmt}")
+            warning = _record_balance(conn, account_id, st, st.source or f"westpac-{fmt}")
             if warning:
                 res.warnings.append(warning)
             for d, attr in ((st.date_from, "date_from"), (st.date_to, "date_to")):

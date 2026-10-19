@@ -272,7 +272,9 @@ def new_subscription(ctx: Context) -> list[Finding]:
             continue
         if (date.fromisoformat(s["first_date"]) - date.fromisoformat(first_ever)).days < 60:
             continue  # it only looks new because your data starts around then
-        k = queries.payee_key(s["payee"])
+        k = queries.payee_key(s.get("original_payee") or s["payee"])
+        if s.get("named") or s.get("merged"):
+            continue  # several spellings: the first-seen check below can't tell, so stay quiet
         if any(queries.payee_key(t["payee"]) == k for t in ctx.before(date.fromisoformat(s["first_date"]))):
             continue  # an older subscription whose price changed: price_rise covers it
         rows = [t for t in ctx.txns if queries.payee_key(t["payee"]) == k and t["d"] >= s["first_date"]]
@@ -282,6 +284,59 @@ def new_subscription(ctx: Context) -> list[Finding]:
                            f"about {money(s['monthly_cost'] * 12)} a year.",
                            "Free trials often turn into these. Keep it if you meant to.",
                            impact_yearly=round(s["monthly_cost"] * 12, 2), evidence=[t["id"] for t in rows[-3:]]))
+    return out
+
+
+def _charges_of(ctx: Context, s: dict) -> list[dict]:
+    """The transactions behind a recurring payment, matched on its payee text."""
+    needles = {(s.get("search") or "").lower()} | {m.lower() for m in s.get("merged", [])} \
+        | {(s.get("original_payee") or s["payee"]).lower()}
+    needles.discard("")
+    return [t for t in ctx.txns if t["c"] < 0 and any(n in t["payee"].lower() for n in needles)]
+
+
+@detector
+def stopped_subscription(ctx: Context) -> list[Finding]:
+    """Recurring payments that stopped (or that you cancelled) in the period, and any that kept
+    charging after you marked them cancelled."""
+    out = []
+    lo, hi = ctx.start.isoformat(), ctx.end.isoformat()
+    for s in queries.subscriptions(ctx.conn, today=min(ctx.end, ctx.today)):
+        name = clean(s["payee"])
+        rows = _charges_of(ctx, s)
+        key = (s.get("search") or s["payee"]).lower()
+        if s.get("charged_after_cancel"):
+            after = [t for t in rows if t["d"] > (s.get("cancelled_on") or "") and t["d"] >= lo]
+            if after:
+                total = -sum(t["c"] for t in after) / 100
+                out.append(Finding(f"cancelcharged:{key}:{after[0]['d']}", "stopped_subscription", "high",
+                                   f"{name} charged you after you cancelled",
+                                   f"You marked it cancelled on {s['cancelled_on']}, but it has charged "
+                                   f"{money(total)} since.",
+                                   "Check the cancellation went through, and ask for a refund.",
+                                   impact_yearly=round(s["monthly_cost"] * 12, 2), evidence=[t["id"] for t in after]))
+            continue
+        if s["active"] or (not s.get("cancelled") and (s["category"] or "").lower() in queries.HABIT_CATEGORIES):
+            continue  # a weekly shop that changed supermarket isn't a cancelled subscription
+        if s.get("cancelled"):
+            when = s["cancelled_on"]
+        else:
+            # The day it stopped counting as active (about two cycles without a payment, the same
+            # rule as kete subs and the TUI); the report for that period mentions it.
+            cadence = next((c for c in queries.CADENCES if c[0] == s["cadence"]), ("", 30.4, 8))
+            grace = 8 if s.get("varying_days") else cadence[2]
+            when = (date.fromisoformat(s["last_date"]) + timedelta(days=int(cadence[1] * 2 + grace) + 1)).isoformat()
+        if not (lo <= when <= hi):
+            continue
+        how = "You cancelled it" if s.get("cancelled") else "No payment since"
+        out.append(Finding(f"stopped:{key}:{s['last_date']}", "stopped_subscription", "good",
+                           f"{name} has stopped",
+                           f"{how} {s['last_date'] if not s.get('cancelled') else 'on ' + s['cancelled_on']}: "
+                           f"about {money(s['monthly_cost'])} a month ({money(s['monthly_cost'] * 12)} a year) "
+                           "you're no longer paying." + ("" if s.get("cancelled") else " If you didn't cancel it, "
+                                                          "check a card hasn't expired."),
+                           impact_yearly=round(s["monthly_cost"] * 12, 2),
+                           evidence=[t["id"] for t in rows if t["d"] <= s["last_date"]][-2:]))
     return out
 
 

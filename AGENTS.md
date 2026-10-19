@@ -11,7 +11,20 @@ kete is a local-first finance tool. The owner's real data lives in `~/kete` (or 
 - Never add network calls, analytics, CDNs or remote fonts. The dashboard's
   Content-Security-Policy (`default-src 'none'`) must stay, and tests check it.
 - Never commit bank exports or databases. `.gitignore` blocks `*.csv`/`*.ofx`/`*.db` outside
-  `tests/fixtures/`, and the fixtures are synthetic.
+  `tests/fixtures/`, and the fixtures are synthetic. Also off limits: `~/kete/formats.toml`,
+  `autoimport.log`, and anything `kete export` writes.
+- `tests/test_kete.py` fails if kete's code imports networking modules (`socket`, `urllib`, `http`,
+  …), or if any page asset could make a request. Only `autoimport.py` may run commands
+  (`launchctl`, `osascript`). Don't weaken these tests.
+
+## Changing data safely
+
+- Wrap every edit to categories, transfers, shares or rules.toml in `history.tracked(conn, action,
+  summary, rules_path)` so `kete undo` can revert it.
+- Spending and income must use your own share: `amount_cents + shared_cents` (`queries.OWN`),
+  not `amount_cents`, so shared costs and repayments aren't double counted.
+- Payee text in TUI markup goes through `escape()` (Static/Label) or `cell_escape()` (DataTable);
+  private mode (`h`) hides amounts and payees via `KeteApp.m()` / `who()` / `cell()`.
 
 ## Reports architecture
 
@@ -61,6 +74,8 @@ in the template. The page reads the model from `<script id="kete-data" type="app
 `demo`, `today`, `config`, `windows` (`recent`, `baseline`, `complete` month lists), `series`
 (up to 7 categories + `"Other"`, in colour-slot order), `kpis`, `monthly[]` (per month:
 `status` complete|partial|incomplete, `income`, `spend`, `net`, `by_series`, `by_category`),
+`months_all[]` (every month with data, up to 3 years: `status`, `spend`, `by_category`; used by the
+any-period breakdown and year-on-year comparison),
 `categories[]` (`recent_avg`, `baseline_avg`, `change_pct`, `monthly[]`, `discretionary`,
 `top_merchants`), `merchants[]`, `frequent_small[]`, `weekday[7]`, `daily[]`, `subscriptions[]`,
 `opportunities[]` (`kind` cut|restore|avoid|cancel, `base_monthly`, `cut`, `enabled`,

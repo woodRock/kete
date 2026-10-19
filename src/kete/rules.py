@@ -226,12 +226,96 @@ def toml_string(s: str) -> str:
     return json.dumps(s, ensure_ascii=False)  # JSON strings are valid TOML basic strings
 
 
-def append_rule(path: Path, *, payee: str, category: str) -> None:
-    """Used by the TUI's 'create rule from payee'. Appends so existing order is preserved."""
+_RULE_HEADER = re.compile(r"^\s*\[\[rule\]\]\s*(#.*)?$")
+
+
+def append_rule(path: Path, *, payee: str, category: str, before: int | None = None) -> None:
+    """Add a payee rule. Appended, so existing order is kept, unless `before` names the index of a
+    rule it must beat (first match wins): then it goes just above that rule."""
     block = (
-        f"\n[[rule]]\nname = {toml_string(payee)}\npayee = {toml_string(payee)}\n"
+        f"[[rule]]\nname = {toml_string(payee)}\npayee = {toml_string(payee)}\n"
         f"category = {toml_string(category)}\n"
     )
     ensure_rules_file(path)
-    with path.open("a") as fh:
-        fh.write(block)
+    if before is None:
+        with path.open("a") as fh:
+            fh.write("\n" + block)
+        return
+    lines = path.read_text().splitlines(keepends=True)
+    headers = [i for i, line in enumerate(lines) if _RULE_HEADER.match(line)]
+    if before < 1 or before > len(headers):
+        raise RulesError(f"no rule #{before} to insert before")
+    at = headers[before - 1]
+    while at > 0 and lines[at - 1].lstrip().startswith("#"):  # keep that rule's comments with it
+        at -= 1
+    text = "".join(lines[:at]) + block + "\n" + "".join(lines[at:])
+    parse_rules(text, str(path))  # never write a file that no longer parses
+    tmp = path.with_suffix(".toml.tmp")
+    tmp.write_text(text)
+    tmp.replace(path)
+
+
+def overridden_rule(rules: list[Rule], tx: dict, category: str) -> Rule | None:
+    """The rule a new payee rule for `category` must come before, if one currently wins with a
+    different result (e.g. the own-account transfer rule catching a payment to someone else)."""
+    rule = first_match(rules, tx)
+    if rule and (rule.transfer or (rule.category or "").lower() != category.lower()):
+        return rule
+    return None
+
+
+_TRAILING_NUM = re.compile(r"(\s+\d+)+$")
+
+
+def rule_payee(payee: str) -> str:
+    """The text a payee rule should match: 'Some Merchant 21' -> 'Some Merchant'."""
+    return _TRAILING_NUM.sub("", " ".join(payee.split()))
+
+
+def suggest_rules(conn: sqlite3.Connection, rules: list[Rule], min_count: int = 2,
+                  payee_keys: set[str] | None = None) -> list[dict]:
+    """Payees you've categorised by hand at least `min_count` times, always the same way, that no
+    rule covers yet. Declined payees are skipped. `payee_keys` limits it to those payees."""
+    declined = {r[0] for r in conn.execute("SELECT payee_key FROM declined_suggestions")}
+    groups: dict[str, dict] = {}
+    for r in conn.execute(
+        """SELECT t.payee, t.description, t.particulars, t.code, t.reference, t.amount_cents,
+                  t.category, a.key AS account
+           FROM transactions t JOIN accounts a ON a.id = t.account_id
+           WHERE t.category_source = 'manual' AND t.is_transfer = 0 AND t.category IS NOT NULL
+           ORDER BY t.posted_date"""):
+        text = rule_payee(r["payee"])
+        key = text.lower()
+        if not text or key in declined or (payee_keys is not None and key not in payee_keys):
+            continue
+        g = groups.setdefault(key, {"payee": text, "categories": {}, "count": 0, "covered": False, "before": None})
+        g["categories"][r["category"].lower()] = r["category"]
+        g["count"] += 1
+        rule = first_match(rules, dict(r))
+        if rule is None:
+            continue
+        if overridden_rule(rules, dict(r), r["category"]):  # you keep correcting a rule: beat it
+            g["before"] = min(g["before"] or rule.index, rule.index)
+        else:
+            g["covered"] = True
+    out = []
+    for key, g in groups.items():
+        if g["count"] >= min_count and len(g["categories"]) == 1 and not g["covered"]:
+            out.append({"payee": g["payee"], "payee_key": key, "category": next(iter(g["categories"].values())),
+                        "count": g["count"], "before": g["before"]})
+    return sorted(out, key=lambda s: -s["count"])
+
+
+def decline_suggestion(conn: sqlite3.Connection, payee: str) -> None:
+    conn.execute("INSERT OR IGNORE INTO declined_suggestions (payee_key) VALUES (?)", (rule_payee(payee).lower(),))
+    conn.commit()
+
+
+def set_category(conn: sqlite3.Connection, ids: list[int], category: str) -> int:
+    """Categorise by hand (paired transfers excepted). Rules won't overwrite it."""
+    if not ids:
+        return 0
+    marks = ",".join("?" * len(ids))
+    return conn.execute(
+        f"""UPDATE transactions SET category = ?, category_source = 'manual', is_transfer = 0
+            WHERE id IN ({marks}) AND transfer_pair_id IS NULL""", (category, *ids)).rowcount

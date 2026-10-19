@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
                     "Childcare", "Rates"],
     # Recurring but never something you'd "cancel": kept out of the subscription list. Other
     # fixed costs (phone, power, insurance) are listed as bills, unticked.
-    "not_subscriptions": ["Rent", "Mortgage", "Rates", "Loan", "Groceries", "Childcare"],
+    "not_subscriptions": ["Rent", "Mortgage", "Rates", "Loan", "Groceries", "Childcare", "Donations"],
     "default_cut": 0.25,  # suggested cut for discretionary categories
     "interest_rate": 0.03,  # annual rate used in the savings projection
     "savings_goal": 0,  # dollars; 0 = no goal line
@@ -108,10 +108,11 @@ def build_model(conn: sqlite3.Connection, config: dict | None = None,
     discretionary = {c.lower() for c in cfg["discretionary"]}
 
     txns = [dict(r) for r in conn.execute(
-        """SELECT t.posted_date AS d, t.amount_cents AS c, COALESCE(t.category, 'Uncategorised') AS cat,
+        """SELECT t.posted_date AS d, t.amount_cents + t.shared_cents AS c, COALESCE(t.category, 'Uncategorised') AS cat,
                   t.payee, t.pending, a.key AS account
            FROM transactions t JOIN accounts a ON a.id = t.account_id
            WHERE t.is_transfer = 0 AND t.transfer_pair_id IS NULL AND t.posted_date <= ?
+             AND t.amount_cents + t.shared_cents != 0
            ORDER BY t.posted_date""", (today.isoformat(),))]
     spend = [t for t in txns if t["c"] < 0 and t["cat"].lower() not in NOT_SPEND]
     fixed = {c.lower() for c in cfg["fixed_costs"]}
@@ -180,6 +181,16 @@ def build_model(conn: sqlite3.Connection, config: dict | None = None,
             "by_series": folded(m),
             "by_category": {c: _r(v) for c, v in sorted(month_cat[m].items(), key=lambda kv: -kv[1])},
         })
+
+    # Every month with data (up to 3 years), for any-period breakdowns and year-on-year comparisons.
+    first_month = min(month_cat) if month_cat else this_month
+    history_months = _month_range(max(first_month, _month_add(this_month, -35)), this_month)
+    months_all = [{
+        "month": m,
+        "status": "partial" if m == this_month else ("complete" if m in complete else "incomplete"),
+        "spend": _r(month_spend[m]),
+        "by_category": {c: _r(v) for c, v in month_cat[m].items()},
+    } for m in history_months]
 
     # --- subscriptions (active), used by categories and opportunities
     never = {c.lower() for c in cfg["not_subscriptions"]}
@@ -315,6 +326,7 @@ def build_model(conn: sqlite3.Connection, config: dict | None = None,
         "series": series,
         "kpis": kpis,
         "monthly": monthly,
+        "months_all": months_all,
         "categories": categories,
         "merchants": merchants[:15],
         "frequent_small": frequent_small[:5],

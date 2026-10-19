@@ -60,3 +60,5 @@ td.amt-neg { color: var(--ink); }
   .finding .actions, .show-dismissed, #finding-filter, #print { display: none !important; }
   .finding details { display: block; }
 }
+#donations { margin-top: 20px; }
+#donations .hint { margin: 10px 0 0; }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS accounts (
@@ -55,7 +55,8 @@ CREATE TABLE IF NOT EXISTS transactions (
     rule_index       INTEGER,
     is_transfer      INTEGER NOT NULL DEFAULT 0,
     pending          INTEGER NOT NULL DEFAULT 0, -- card auth not yet posted
-    transfer_pair_id INTEGER
+    transfer_pair_id INTEGER,
+    shared_cents     INTEGER NOT NULL DEFAULT 0 -- part that is someone else's (see shares)
 );
 CREATE INDEX IF NOT EXISTS tx_account_date ON transactions(account_id, posted_date);
 CREATE INDEX IF NOT EXISTS tx_date ON transactions(posted_date);
@@ -72,6 +73,53 @@ CREATE TABLE IF NOT EXISTS balances (
 CREATE TABLE IF NOT EXISTS dismissals (
     finding_id   TEXT PRIMARY KEY,
     dismissed_at TEXT NOT NULL
+);
+
+-- Money other people owe you on a payment (cents > 0), or paid you back (cents < 0).
+-- transactions.shared_cents is the sum per transaction, so totals can use your own share.
+CREATE TABLE IF NOT EXISTS shares (
+    tx_id      INTEGER NOT NULL REFERENCES transactions(id) ON DELETE CASCADE,
+    person     TEXT NOT NULL,
+    cents      INTEGER NOT NULL,
+    note       TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (tx_id, person)
+);
+
+-- Undo history: each row restores the listed transactions (and rules.toml) to how they were.
+CREATE TABLE IF NOT EXISTS changes (
+    id          INTEGER PRIMARY KEY,
+    at          TEXT NOT NULL,
+    action      TEXT NOT NULL,
+    summary     TEXT NOT NULL,
+    payload     TEXT NOT NULL,                 -- JSON, see history.py
+    undone_at   TEXT
+);
+
+-- Bills and subscriptions the owner named, for when detection can't see them (paid on varying
+-- days, several payee spellings, a new price). match is a JSON list of payee substrings.
+CREATE TABLE IF NOT EXISTS bills (
+    id               INTEGER PRIMARY KEY,
+    name             TEXT NOT NULL UNIQUE,
+    match            TEXT NOT NULL,
+    amount_min_cents INTEGER,
+    amount_max_cents INTEGER,
+    cadence          TEXT NOT NULL DEFAULT 'monthly',
+    created_at       TEXT NOT NULL
+);
+
+-- The owner's choices about a recurring payment (detected or named), keyed by its lower-case
+-- payee/brand text: a display name, and whether they cancelled it (and its last payment then).
+CREATE TABLE IF NOT EXISTS recurring_prefs (
+    key            TEXT PRIMARY KEY,
+    name           TEXT,
+    cancelled_on   TEXT,
+    cancelled_last TEXT
+);
+
+-- Payees the owner said "don't suggest a rule" for.
+CREATE TABLE IF NOT EXISTS declined_suggestions (
+    payee_key TEXT PRIMARY KEY
 );
 
 -- Remembered answers to "which account is this CSV?" keyed by a filename pattern.
@@ -97,8 +145,9 @@ def connect(path: Path, readonly: bool = False) -> sqlite3.Connection:
         conn = sqlite3.connect(path)
         conn.executescript(SCHEMA)
         cols = {r[1] for r in conn.execute("PRAGMA table_info(transactions)")}
-        if "pending" not in cols:
-            conn.execute("ALTER TABLE transactions ADD COLUMN pending INTEGER NOT NULL DEFAULT 0")
+        for col in ("pending", "shared_cents"):
+            if col not in cols:
+                conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

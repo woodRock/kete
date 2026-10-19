@@ -18,7 +18,7 @@ def detect_format(path: Path) -> str:
     return "csv"
 
 
-def parse_file(path: Path) -> tuple[str, list[Statement]]:
+def parse_file(path: Path, formats: list | None = None) -> tuple[str, list[Statement]]:
     fmt = detect_format(path)
     if fmt == "ofx":
         from .ofx import parse_ofx
@@ -27,7 +27,7 @@ def parse_file(path: Path) -> tuple[str, list[Statement]]:
     if fmt == "csv":
         from .westpac_csv import parse_csv
 
-        return fmt, [parse_csv(path)]
+        return fmt, [parse_csv(path, formats)]
     raise ParseError(f"{path.name}: {fmt.upper()} is not supported; export OFX or CSV instead")
 
 

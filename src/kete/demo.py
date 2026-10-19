@@ -70,6 +70,7 @@ def build_demo_db(today: date | None = None, months: int = 15, seed: int = 7) ->
     for m in (two_back, last_month):  # a new subscription
         add(everyday, m.replace(day=6), -12.99, "Fitness Plus App")
 
+    drng = random.Random(seed + 1)  # its own stream, so the rows above stay as they were
     d = start
     week = 0
     while d <= today:
@@ -118,6 +119,11 @@ def build_demo_db(today: date | None = None, months: int = 15, seed: int = 7) ->
             rwt = round(gross * 0.175, 2)
             add(savings, d - timedelta(days=1), gross - rwt, "Credit Interest", "Credit Interest",
                 "Less W/Tax", f"${gross:.2f}", f"${rwt:.2f}")
+        if drng.random() < 0.025:  # occasional donations (tax-year report: IR526 credit)
+            add(everyday, d, -round(drng.choice([20, 25, 50, 100]), 2),
+                drng.choice(["Harbour Food Bank", "Coastal Wildlife Trust"]), "BILL PAYMENT", "", "Donation")
+        if d.day == 28 and d.month == 12:
+            add(everyday, d, -3.00, "Street Appeal", "EFTPOS", "", "Donation")  # under $5: no receipt
         d += timedelta(days=1)
 
     for i, (acct, posted, cents, payee, desc, code, particulars, reference) in enumerate(rows):

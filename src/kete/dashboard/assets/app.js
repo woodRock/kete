@@ -127,10 +127,13 @@
     hidden: new Set(),
     view: "categories",
     selected: lastComplete >= 0 ? lastComplete : D.monthly.length - 1,
+    compare: true,
     opps: new Map(D.opportunities.map((o) => [o.id, { enabled: o.enabled, cut: o.cut, ...(saved.opps?.[o.id] || {}) }])),
     horizon: saved.horizon || 24,
     rate: saved.rate ?? Math.round(D.config.interest_rate * 10000) / 100,
   };
+  // The breakdown's period: a month (from === to) or a run of months, as yyyy-mm keys.
+  state.from = state.to = state.anchor = D.monthly[state.selected].month;
   const monthlySavings = () => D.opportunities.reduce((sum, o) => {
     const st = state.opps.get(o.id);
     return sum + (st.enabled ? o.base_monthly * st.cut : 0);
@@ -237,7 +240,8 @@
     const labelEvery = band < 46 ? 2 : 1;
     months.forEach((mo, i) => {
       const cx = m.l + band * i + band / 2;
-      const g = s("g", { class: "bar-group" + (i === state.selected ? " selected" : ""), tabindex: 0, role: "button",
+      const inPeriod = mo.month >= state.from && mo.month <= state.to;
+      const g = s("g", { class: "bar-group" + (inPeriod ? " selected" : ""), tabindex: 0, role: "button",
         "aria-label": `${monthName(mo.month)}: spent ${money(mo.spend, 0)}, income ${money(mo.income, 0)}` });
       g.append(s("rect", { class: "col-bg", x: m.l + band * i + 2, y: m.t, width: band - 4, height: ph, rx: 6, fill: "transparent" }));
       const delay = animate ? `animation-delay:${i * 35}ms` : "";
@@ -281,14 +285,18 @@
       }
       g.addEventListener("pointerleave", hideTip);
       g.addEventListener("blur", hideTip);
-      const select = () => { state.selected = i; renderMonthly(); renderBreakdown(); };
+      const select = (e) => {
+        state.selected = i;
+        if (e && e.shiftKey) setPeriod(state.anchor < mo.month ? state.anchor : mo.month, state.anchor < mo.month ? mo.month : state.anchor, false);
+        else setPeriod(mo.month, mo.month);
+      };
       g.addEventListener("click", select);
       g.addEventListener("keydown", (e) => {
         if (e.key === "Enter" || e.key === " ") { e.preventDefault(); select(); }
         if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
           e.preventDefault();
           state.selected = Math.max(0, Math.min(n - 1, i + (e.key === "ArrowRight" ? 1 : -1)));
-          renderMonthly(); renderBreakdown();
+          setPeriod(months[state.selected].month, months[state.selected].month);
           root.querySelectorAll(".bar-group")[state.selected]?.focus();
         }
       });
@@ -303,24 +311,70 @@
   const statusNote = (mo) => mo.status === "partial" ? " (so far)" : mo.status === "incomplete" ? " (incomplete data)" : "";
 
   function hbars(root, items, color, valueFmt = (v) => money(v, 0)) {
-    const max = Math.max(...items.map((i) => i.value), 1);
+    const max = Math.max(...items.map((i) => Math.max(i.value, i.was || 0)), 1);
     items.forEach((it, idx) => {
       const fill = h("div", { class: "fill" + (animate ? " grow-x" : ""),
         style: `width:${(it.value / max) * 100}%;background:${color(it)};animation-delay:${idx * 30}ms` });
+      const track = h("div", { class: "track" }, fill);
+      if (it.was != null) {
+        const tick = h("i", { class: "was", style: `left:${(it.was / max) * 100}%` });
+        const tipRows = [{ value: money(it.value, 0), label: "This period", color: color(it) }, { value: money(it.was, 0), label: "A year earlier" }];
+        track.addEventListener("pointermove", (e) => showTip(e, it.name, tipRows));
+        track.addEventListener("pointerleave", hideTip);
+        track.append(tick);
+      }
       root.append(h("div", { class: "hbar" },
         h("div", { class: "name", title: it.name }, it.swatch ? h("i", { class: "swatch", style: `background:${color(it)}` }) : null,
           h("span", { text: it.name }), it.tag ? h("span", { class: "tag", text: it.tag }) : null),
-        h("div", { class: "track" }, fill),
-        h("div", { class: "amt", text: valueFmt(it.value, it) })));
+        track,
+        h("div", { class: "amt" }, valueFmt(it.value, it), it.was != null ? h("span", { class: "was-txt", text: `was ${money(it.was, 0)}` }) : null)));
     });
   }
 
+  // ------------------------------------------------------------------ any-period breakdown
+
+  const allMonths = D.months_all || D.monthly;
+  const shiftYear = (key, by) => `${Number(key.slice(0, 4)) + by}${key.slice(4)}`;
+  const periodLabel = (from, to) => from === to ? monthName(from)
+    : from.slice(0, 4) === to.slice(0, 4) ? `${monthName(from).split(" ")[0]} – ${monthName(to)}` : `${monthName(from)} – ${monthName(to)}`;
+
+  function sumMonths(from, to) {
+    const ms = allMonths.filter((m) => m.month >= from && m.month <= to);
+    const cats = {};
+    for (const m of ms) for (const [c, v] of Object.entries(m.by_category)) cats[c] = (cats[c] || 0) + v;
+    return { months: ms, cats, spend: ms.reduce((a, m) => a + m.spend, 0) };
+  }
+
+  function setPeriod(from, to, moveAnchor = true) {
+    state.from = from; state.to = to;
+    if (moveAnchor) state.anchor = from;
+    $("period-from").value = from; $("period-to").value = to;
+    renderMonthly(); renderBreakdown();
+  }
+
   function renderBreakdown() {
-    const mo = D.monthly[state.selected];
-    $("breakdown-title").textContent = `${monthName(mo.month)}${statusNote(mo)} · ${money(mo.spend, 0)} spent`;
+    const now = sumMonths(state.from, state.to);
+    const partial = now.months.some((m) => m.status === "partial") ? " (so far)" : "";
+    $("breakdown-title").textContent = `${periodLabel(state.from, state.to)}${partial} · ${money(now.spend, 0)} spent`;
+    const pFrom = shiftYear(state.from, -1), pTo = shiftYear(state.to, -1);
+    const hasPrev = allMonths.length && allMonths[0].month <= pFrom && allMonths.some((m) => m.month >= pFrom && m.month <= pTo && m.spend > 0);
+    const compare = state.compare && hasPrev;
+    const prev = compare ? sumMonths(pFrom, pTo) : null;
+    const note = $("breakdown-compare");
+    $("period-compare").disabled = !hasPrev;
+    if (compare) {
+      const d = now.spend - prev.spend;
+      note.textContent = `${periodLabel(pFrom, pTo)}: ${money(prev.spend, 0)} (${d >= 0 ? "+" : "−"}${money(Math.abs(d), 0)}${prev.spend ? `, ${d >= 0 ? "+" : "−"}${Math.abs(Math.round(d / prev.spend * 100))}%` : ""}). The line on each bar marks a year earlier.`
+        + (partial ? " This period isn't over yet." : "");
+    } else {
+      note.textContent = hasPrev ? "" : "No data from a year earlier to compare with.";
+    }
     const root = clear($("breakdown"));
-    const items = Object.entries(mo.by_category).map(([name, value]) => ({ name, value, swatch: true }));
-    if (!items.length) { root.append(h("p", { class: "empty", text: "No spending recorded this month." })); return; }
+    const names = Object.keys(now.cats);
+    if (compare) for (const c of Object.keys(prev.cats)) if (!names.includes(c) && prev.cats[c] >= 1) names.push(c);
+    const items = names.map((name) => ({ name, value: now.cats[name] || 0, swatch: true, was: compare ? (prev.cats[name] || 0) : null }))
+      .sort((a, b) => Math.max(b.value, b.was || 0) - Math.max(a.value, a.was || 0));
+    if (!items.length) { root.append(h("p", { class: "empty", text: "No spending recorded in this period." })); return; }
     hbars(root, items, (it) => categoryColor(it.name));
   }
 
@@ -635,7 +689,17 @@
     });
   }
 
+  function setupPeriod() {
+    const from = $("period-from"), to = $("period-to");
+    for (const sel of [from, to]) for (const m of [...allMonths].reverse()) sel.append(h("option", { value: m.month, text: monthName(m.month) }));
+    from.value = state.from; to.value = state.to;
+    from.addEventListener("change", () => setPeriod(from.value, to.value < from.value ? from.value : to.value));
+    to.addEventListener("change", () => setPeriod(from.value > to.value ? to.value : from.value, to.value));
+    $("period-compare").addEventListener("change", (e) => { state.compare = e.target.checked; renderBreakdown(); });
+  }
+
   function setupControls() {
+    setupPeriod();
     const seg = document.querySelectorAll(".seg button");
     seg.forEach((b) => b.addEventListener("click", () => {
       state.view = b.dataset.view;
