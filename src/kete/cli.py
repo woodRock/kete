@@ -307,11 +307,17 @@ def cashflow(months: int = typer.Option(12, "--months"), as_json: bool = JsonOpt
 
 
 @app.command()
-def subs(include_inactive: bool = typer.Option(False, "--all"), as_json: bool = JsonOpt):
+def subs(
+    include_inactive: bool = typer.Option(False, "--all"),
+    explain: bool = typer.Option(False, "--explain", help="Also list near-misses and why they were rejected."),
+    as_json: bool = JsonOpt,
+):
     """Recurring charges: same payee, similar amount, regular interval."""
-    data = [s for s in queries.subscriptions(_open()) if include_inactive or s["active"]]
+    rows = queries.subscriptions(_open(), explain=explain)
+    data = [s for s in rows if not s.get("rejected") and (include_inactive or s["active"])]
+    rejected = [s for s in rows if s.get("rejected")]
     if as_json:
-        return _emit_json(data)
+        return _emit_json(data + rejected)
     _table(["payee", "cadence", "typical", "≈/month", "count", "last", "next"],
            [[s["payee"], s["cadence"], _money(s["typical_amount"]), _money(s["monthly_cost"]),
              s["count"], s["last_date"], s["next_expected"]] for s in data],
@@ -319,6 +325,12 @@ def subs(include_inactive: bool = typer.Option(False, "--all"), as_json: bool = 
     if data:
         total = sum(s["monthly_cost"] for s in data if s["active"])
         console.print(f"Active recurring ≈ {_money(total)}/month")
+    if explain:
+        _table(["payee", "charges", "last", "why not"],
+               [[s["payee"], s["charges"], s["last_date"], s["reason"]] for s in rejected],
+               right={1}, title="Not detected")
+        console.print("Charges must be similar (within 15%) and regular; a new or changed price "
+                      "needs 3 charges, or 2 identical monthly/yearly ones.")
 
 
 @app.command()

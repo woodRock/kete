@@ -493,7 +493,7 @@
     root.append(grid);
 
     const subsRoot = clear($("subscriptions"));
-    const subs = D.opportunities.filter((o) => o.group === "subscriptions");
+    const subs = D.opportunities.filter((o) => o.group === "subscriptions").sort((a, z) => (a.bill ? 1 : 0) - (z.bill ? 1 : 0));
     if (!subs.length) { subsRoot.append(h("p", { class: "empty", text: "No regular subscriptions detected." })); return; }
     const list = h("div", { class: "subs" });
     for (const o of subs) {
@@ -501,11 +501,12 @@
       const item = h("label", { class: "sub-item" + (st.enabled ? " on" : "") });
       item.append(h("input", { type: "checkbox", checked: st.enabled || null, "aria-label": `Cancel ${o.title}`,
           onchange: (e) => { st.enabled = e.target.checked; item.classList.toggle("on", st.enabled); changed(); } }),
-        h("div", { class: "grow1" }, h("div", { text: o.title }), h("small", { text: o.detail })),
+        h("div", { class: "grow1", title: o.evidence }, h("div", {}, o.title, o.bill ? h("span", { class: "tag", text: "bill" }) : null),
+          h("small", { text: o.detail })),
         h("div", { class: "amt" }, h("div", { text: money(o.base_monthly) + "/mo" }), h("small", { text: money(o.base_monthly * 12, 0) + "/yr" })));
       list.append(item);
     }
-    subsRoot.append(h("p", { class: "hint", text: "Tick the ones you'd cancel." }), list);
+    subsRoot.append(h("p", { class: "hint", text: "Tick the ones you'd cancel. Bills are listed too, in case a cheaper plan exists." }), list);
   }
 
   function changed() { updatePotential(); renderProjection(); persist(); }

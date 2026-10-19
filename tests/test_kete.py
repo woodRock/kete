@@ -488,3 +488,75 @@ def test_cli_dashboard_demo(tmp_path, monkeypatch):
     r = CliRunner().invoke(app, ["dashboard", "--demo", "--no-open", "--out", str(out)])
     assert r.exit_code == 0 and out.exists()
     assert not (tmp_path / "k").exists()  # demo never touches the real data folder
+
+
+def _charges(conn, rows):
+    acct = dbmod.get_or_create_account(conn, "everyday")
+    for i, (d, cents, payee) in enumerate(rows):
+        conn.execute(
+            "INSERT INTO transactions (account_id, posted_date, amount_cents, payee, dedupe_key, source, raw_json)"
+            " VALUES (?, ?, ?, ?, ?, 'test', '{}')", (acct, d, cents, payee, f"s{payee}{i}{d}"))
+
+
+def _sub_names(conn, today=date(2026, 10, 19), **kw):
+    return {s["payee"]: s for s in queries.subscriptions(conn, today=today, **kw) if not s.get("rejected")}
+
+
+def test_subscription_survives_price_change(env):
+    _, conn = env
+    _charges(conn, [("2026-04-05", -4000, "Streamflix"), ("2026-05-05", -4000, "Streamflix"),
+                    ("2026-06-05", -4000, "Streamflix"), ("2026-07-05", -17600, "Streamflix"),
+                    ("2026-08-05", -17600, "Streamflix"), ("2026-09-05", -17600, "Streamflix"),
+                    ("2026-10-05", -17600, "Streamflix")])
+    s = _sub_names(conn)["Streamflix"]
+    assert s["typical_amount"] == 176.0 and s["count"] == 4
+
+
+def test_subscription_merges_payee_spellings(env):
+    _, conn = env
+    _charges(conn, [("2026-06-14", -4600, "Cloudco 13"), ("2026-07-14", -4600, "Cloudco* Pro"),
+                    ("2026-08-14", -4600, "Cloudco 13"), ("2026-09-14", -4600, "Cloudco* Pro"),
+                    ("2026-10-14", -4600, "Cloudco 14")])
+    subs = _sub_names(conn)
+    assert len(subs) == 1
+    (s,) = subs.values()
+    assert s["cadence"] == "monthly" and s["count"] == 5
+
+
+def test_two_identical_monthly_charges_count_but_variable_shopping_does_not(env):
+    _, conn = env
+    _charges(conn, [("2026-08-20", -1299, "New App"), ("2026-09-20", -1299, "New App")])
+    _charges(conn, [(f"2026-{m:02d}-{d:02d}", -c, "Big Supermarket") for m, d, c in
+                    [(7, 4, 15200), (7, 11, 11800), (7, 18, 16900), (7, 25, 12100), (8, 1, 17500),
+                     (8, 8, 10900), (8, 15, 14800), (8, 22, 12300)]])
+    subs = _sub_names(conn)
+    assert subs["New App"]["confidence"] == "low"
+    assert "Big Supermarket" not in subs
+
+
+def test_same_day_duplicate_charge_does_not_break_detection(env):
+    _, conn = env
+    _charges(conn, [("2026-07-16", -4600, "Seatco"), ("2026-08-16", -4600, "Seatco"),
+                    ("2026-09-16", -4600, "Seatco"), ("2026-10-16", -4600, "Seatco"),
+                    ("2026-10-16", -4600, "Seatco")])
+    assert _sub_names(conn)["Seatco"]["typical_amount"] == 46.0
+
+
+def test_subs_explain_lists_near_misses(env):
+    _, conn = env
+    _charges(conn, [("2026-08-01", -999, "Gamepass"), ("2026-09-02", -1499, "Gamepass")])
+    rows = queries.subscriptions(conn, today=date(2026, 10, 19), explain=True)
+    miss = [r for r in rows if r.get("rejected")]
+    assert miss and miss[0]["payee"] == "Gamepass" and "amount" in miss[0]["reason"]
+
+
+def test_dashboard_lists_bills_but_not_rent():
+    from kete.dashboard import build_model
+    from kete.demo import build_demo_db
+
+    today = date(2026, 10, 19)
+    m = build_model(build_demo_db(today=today), today=today, demo=True)
+    subs = {s["payee"]: s for s in m["subscriptions"]}
+    assert "Harbour Property" not in subs  # rent is recurring but never "cancellable"
+    assert subs["One NZ Mobile"]["bill"] and not subs["Netflix.com"]["bill"]
+    assert "Spotify" in subs and "CityGym Membership" in subs

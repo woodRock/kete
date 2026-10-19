@@ -25,6 +25,9 @@ DEFAULT_CONFIG = {
     # patterns (calendar, weekday, merchant share) so rent day doesn't drown everything out.
     "fixed_costs": ["Rent", "Mortgage", "Utilities", "Insurance", "Loan", "Groceries", "Health",
                     "Childcare", "Rates"],
+    # Recurring but never something you'd "cancel": kept out of the subscription list. Other
+    # fixed costs (phone, power, insurance) are listed as bills, unticked.
+    "not_subscriptions": ["Rent", "Mortgage", "Rates", "Loan", "Groceries", "Childcare"],
     "default_cut": 0.25,  # suggested cut for discretionary categories
     "interest_rate": 0.03,  # annual rate used in the savings projection
     "savings_goal": 0,  # dollars; 0 = no goal line
@@ -179,8 +182,11 @@ def build_model(conn: sqlite3.Connection, config: dict | None = None,
         })
 
     # --- subscriptions (active), used by categories and opportunities
-    subs = [s for s in queries.subscriptions(conn)
-            if s["active"] and (s["category"] or "").lower() not in fixed]
+    never = {c.lower() for c in cfg["not_subscriptions"]}
+    subs = [s for s in queries.subscriptions(conn, today=today)
+            if s["active"] and (s["category"] or "").lower() not in never]
+    for s in subs:
+        s["bill"] = (s["category"] or "").lower() in fixed
     sub_keys = {queries.payee_key(s["payee"]) for s in subs}
     subs_by_cat: dict[str, float] = defaultdict(float)
     for s in subs:
@@ -286,7 +292,7 @@ def build_model(conn: sqlite3.Connection, config: dict | None = None,
         "last_month": last_complete,
         "last_month_spend": _r(month_spend[last_complete]) if last_complete else None,
         "spend_trend": [_r(month_spend[m]) for m in display],
-        "subscriptions_monthly": _r(sum(s["monthly_cost"] for s in subs)),
+        "subscriptions_monthly": _r(sum(s["monthly_cost"] for s in subs if not s["bill"])),
     }
 
     opportunities = _opportunities(categories, subs, subs_by_cat, cfg, len(recent))
@@ -317,7 +323,8 @@ def build_model(conn: sqlite3.Connection, config: dict | None = None,
         "subscriptions": [{
             "payee": s["payee"], "cadence": s["cadence"], "typical": s["typical_amount"],
             "monthly": s["monthly_cost"], "annual": _r(s["monthly_cost"] * 12),
-            "category": s["category"], "last_date": s["last_date"],
+            "category": s["category"], "last_date": s["last_date"], "bill": s["bill"],
+            "confidence": s["confidence"], "merged": s["merged"],
         } for s in subs],
         "opportunities": opportunities,
         "insights": insights,
@@ -386,11 +393,17 @@ def _opportunities(categories, subs, subs_by_cat, cfg, n_recent) -> list[dict]:
             "evidence": "", "base_monthly": fees["recent_avg"], "cut": 1.0, "adjustable": False, "enabled": True,
         })
     for s in subs:
+        extra = []
+        if s["merged"]:
+            extra.append("Billed as " + ", ".join(s["merged"]) + ".")
+        if s["confidence"] == "low":
+            extra.append("Only two charges so far.")
         out.append({
             "id": f"cancel:{queries.payee_key(s['payee'])}", "kind": "cancel", "group": "subscriptions",
-            "category": s["category"], "title": _clean_payee(s["payee"]),
-            "detail": f"{s['cadence'].capitalize()}, about {_money(s['typical_amount'])} each time.",
-            "evidence": f"Last charged {s['last_date']}.",
+            "category": s["category"], "title": _clean_payee(s["payee"]), "bill": s["bill"],
+            "detail": f"{s['cadence'].capitalize()}, about {_money(s['typical_amount'])} each time"
+                      + (". A bill: worth checking for a cheaper plan." if s["bill"] else "."),
+            "evidence": " ".join([f"Last charged {s['last_date']}."] + extra),
             "base_monthly": s["monthly_cost"], "cut": 1.0, "adjustable": False, "enabled": False,
         })
     out.sort(key=lambda o: (o["group"] != "categories", -o["base_monthly"] * o["cut"]))
@@ -439,9 +452,10 @@ def _insights(categories, flexible, frequent_small, subs, weekday, kpis, n_recen
                     "body": f"{f['name']}: about {f['per_month']:.0f} purchases a month at "
                             f"{_money(f['typical'])}, {_money(f['monthly_avg'])}/month or "
                             f"{_money(f['monthly_avg'] * 12)} a year."})
+    subs = [s for s in subs if not s["bill"]]
     if subs:
         total = sum(s["monthly_cost"] for s in subs)
-        out.append({"tone": "info", "title": f"{len(subs)} active subscriptions",
+        out.append({"tone": "info", "title": f"{len(subs)} active subscription{'s' if len(subs) != 1 else ''}",
                     "body": f"About {_money(total)}/month, {_money(total * 12)} a year. "
                             "Review them under Where to cut."})
     if any(weekday):

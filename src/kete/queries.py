@@ -206,9 +206,75 @@ def stale(conn: sqlite3.Connection, days: int = 30) -> list[dict]:
 
 CADENCES = (("weekly", 7, 1), ("fortnightly", 14, 2), ("monthly", 30.4, 4),
             ("quarterly", 91, 7), ("yearly", 365, 15))
+AMOUNT_TOLERANCE = 0.15  # FX-billed subscriptions wobble a few percent; price changes don't
+# First words that name a payment platform rather than the merchant ("Google One", "Google Spotify").
+_PLATFORM_WORDS = {"google", "apple", "paypal", "sq", "sp", "dd", "pp", "amazon", "microsoft", "the",
+                   "uber", "new", "to", "from", "frm", "bill", "direct", "online", "foreign"}
+_WORD = re.compile(r"[a-z0-9]+")
 
 
-def subscriptions(conn: sqlite3.Connection, min_count: int = 3) -> list[dict]:
+def brand_key(payee: str) -> str | None:
+    """'Cloudco* Pro', 'Cloudco 14' -> 'cloudco'. None when the first word is too generic."""
+    words = _WORD.findall(payee.lower())
+    if not words or words[0] in _PLATFORM_WORDS or len(words[0]) < 4 or words[0].isdigit():
+        return None
+    return words[0]
+
+
+def _evaluate(rows: list, today: date, min_count: int) -> tuple[dict | None, str]:
+    """Decide whether one merchant's charges are a subscription. Returns (result, reason)."""
+    by_day: dict[str, int] = {}
+    for r in rows:  # one charge per day: a same-day duplicate is a seat or a retry, not a cycle
+        by_day[r["posted_date"]] = max(by_day.get(r["posted_date"], 0), -r["amount_cents"])
+    days = sorted(by_day)
+    if len(days) < 2:
+        return None, "only one charge"
+    # Most recent run of similar amounts: a price rise starts a new run instead of disqualifying.
+    last_amt = by_day[days[-1]]
+    run = [days[-1]]
+    for d in reversed(days[:-1]):
+        if abs(by_day[d] - last_amt) <= max(AMOUNT_TOLERANCE * last_amt, 100):
+            run.insert(0, d)
+        else:
+            break
+    if len(run) < 2:
+        return None, f"amount changes every time (last {dollars(-last_amt)})"
+    gaps = [(date.fromisoformat(b) - date.fromisoformat(a)).days for a, b in zip(run, run[1:])]
+    med_gap = median(gaps)
+    cadence = next((c for c in CADENCES if abs(med_gap - c[1]) <= c[2]), None)
+    if not cadence:
+        return None, f"no regular interval (typically {med_gap:.0f} days apart)"
+    name, period, tol = cadence
+    regular = sum(1 for g in gaps if abs(g - period) <= tol * 2) / len(gaps)
+    if regular < 0.6:
+        return None, f"{name} at best, but only {regular:.0%} of intervals fit"
+    amounts = [by_day[d] for d in run]
+    exact = len(set(amounts)) == 1
+    if len(run) < min_count and not (len(run) == 2 and exact and name in ("monthly", "quarterly", "yearly")):
+        return None, f"only {len(run)} similar charges so far"
+    last = date.fromisoformat(run[-1])
+    status = "inactive" if (today - last).days > period * 2 + tol else "active"
+    typical = median(amounts)
+    return {
+        "cadence": name,
+        "typical_amount": dollars(int(typical)),
+        "last_amount": dollars(amounts[-1]),
+        "count": len(run),
+        "first_date": run[0],
+        "last_date": run[-1],
+        "next_expected": (last + timedelta(days=round(period))).isoformat(),
+        "active": status == "active",
+        "confidence": "high" if len(run) >= 3 else "low",
+        "monthly_cost": dollars(int(typical * 30.4 / period)),
+    }, status
+
+
+def subscriptions(conn: sqlite3.Connection, min_count: int = 3, today: date | None = None,
+                  explain: bool = False) -> list[dict]:
+    """Recurring charges: same merchant, similar amount, regular interval.
+
+    With explain=True, returns near-misses too, each with a `reason`."""
+    today = today or date.today()
     groups: dict[str, list] = defaultdict(list)
     names: dict[str, str] = {}
     for r in conn.execute(
@@ -217,45 +283,47 @@ def subscriptions(conn: sqlite3.Connection, min_count: int = 3) -> list[dict]:
     ):
         k = payee_key(r["payee"])
         groups[k].append(r)
-        names.setdefault(k, _TRAILING_NUM.sub("", " ".join(r["payee"].split())))
+        names[k] = _TRAILING_NUM.sub("", " ".join(r["payee"].split()))  # latest spelling
 
-    today = date.today()
-    out = []
+    out, misses, leftover = [], [], defaultdict(list)
     for k, rows in groups.items():
-        by_day: dict[str, int] = {}
-        for r in rows:  # several charges on one day count as one occurrence
-            by_day[r["posted_date"]] = by_day.get(r["posted_date"], 0) + r["amount_cents"]
-        days = sorted(by_day)
-        if len(days) < min_count:
+        result, reason = _evaluate(rows, today, min_count)
+        if result:
+            out.append({"payee": names[k], "category": rows[-1]["category"], "merged": [], **result})
             continue
-        gaps = [(date.fromisoformat(b) - date.fromisoformat(a)).days for a, b in zip(days, days[1:])]
-        med_gap = median(gaps)
-        cadence = next((c for c in CADENCES if abs(med_gap - c[1]) <= c[2]), None)
-        if not cadence:
+        b = brand_key(rows[-1]["payee"])
+        if b:
+            leftover[b].append((k, rows))
+        misses.append((k, rows, reason))
+
+    # Second pass: the same service billed under several payee spellings.
+    merged_keys: set[str] = set()
+    for b, parts in leftover.items():
+        if len(parts) < 2:
             continue
-        name, period, tol = cadence
-        regular = sum(1 for g in gaps if abs(g - period) <= tol * 2) / len(gaps)
-        amounts = [-v for v in by_day.values()]
-        med_amt = median(amounts)
-        similar = sum(1 for a in amounts if abs(a - med_amt) <= max(0.25 * med_amt, 100)) / len(amounts)
-        if regular < 0.6 or similar < 0.6:
-            continue
-        last = date.fromisoformat(days[-1])
-        next_due = last + timedelta(days=round(period))
-        out.append({
-            "payee": names[k],
-            "cadence": name,
-            "typical_amount": dollars(int(med_amt)),
-            "last_amount": dollars(amounts[-1]),
-            "count": len(days),
-            "last_date": days[-1],
-            "next_expected": next_due.isoformat(),
-            "active": (today - last).days <= period * 2 + tol,
-            "category": rows[-1]["category"],
-            "monthly_cost": dollars(int(med_amt * 30.4 / period)),
-        })
+        rows = sorted((r for _, rs in parts for r in rs), key=lambda r: r["posted_date"])
+        result, _ = _evaluate(rows, today, min_count)
+        if result:
+            keys = [k for k, _ in parts]
+            merged_keys.update(keys)
+            out.append({"payee": names[max(keys, key=lambda k: groups[k][-1]["posted_date"])],
+                        "category": rows[-1]["category"], "merged": [names[k] for k in keys], **result})
+
     out.sort(key=lambda s: (not s["active"], -s["monthly_cost"]))
-    return out
+    if not explain:
+        return out
+    near = []
+    for k, rows, reason in misses:
+        if k in merged_keys:
+            continue
+        days = {r["posted_date"] for r in rows}
+        span = (date.fromisoformat(max(days)) - date.fromisoformat(min(days))).days or 1
+        if len(days) < 2 or len(days) / span * 30.4 > 8:  # one-offs and everyday shopping aren't near-misses
+            continue
+        near.append({"payee": names[k], "category": rows[-1]["category"], "charges": len(rows),
+                     "last_date": max(days), "reason": reason})
+    near.sort(key=lambda n: n["last_date"], reverse=True)
+    return out + [{"rejected": True, **n} for n in near]
 
 
 def import_log(conn: sqlite3.Connection, limit: int = 50) -> list[dict]:
