@@ -1,0 +1,77 @@
+# kete categorisation rules.
+#
+# Rules are checked top to bottom; the first match wins. Every condition in a rule must match.
+# Conditions (all optional, at least one required):
+#   payee, description, particulars, code, reference   case-insensitive "contains" match
+#   any                                                 matches any of the text fields above
+#   account = "uber"                                    only this account
+#   amount_min / amount_max = -50.0                     signed dollars, debits negative
+# A value can be a string or a list of strings (any of them may match).
+# Set regex = true to treat the values as regular expressions instead.
+# Actions: category = "Groceries"  or  transfer = true (excluded from spend and income).
+#
+# After editing, run:  kete rules apply
+# To check a description: kete rules test "NEW WORLD CITY"
+#
+# Westpac column mapping: payee = "Other Party", description = transaction type
+# (DEBIT, DIRECT CREDIT, ONLINE BANKING...), code = "Analysis Code".
+
+# Money moved between your own Westpac accounts via online banking.
+[[rule]]
+name = "Own-account transfer"
+particulars = "WBC Internet"
+code = "Transfer"
+transfer = true
+
+[[rule]]
+name = "Interest"
+description = "Credit Interest"
+category = "Interest"
+
+[[rule]]
+name = "Takeaways"
+payee = ["uber *eats", "uber* eats", "doordash", "menulog", "delivereasy"]
+category = "Takeaways"
+
+[[rule]]
+name = "Rideshare"
+payee = ["uber *trip", "uber* trip", "uber trip", "zoomy", "ola "]
+category = "Transport"
+
+[[rule]]
+name = "Groceries"
+payee = ["new world", "pak n save", "pak'nsave", "pakn", "woolworths", "countdown",
+         "fresh choice", "four square", "supervalue"]
+category = "Groceries"
+
+[[rule]]
+name = "Utilities"
+payee = ["powershop", "mercury", "genesis", "contact energy", "meridian", "2degrees",
+         "spark", "one nz", "vodafone", "skinny"]
+category = "Utilities"
+
+[[rule]]
+name = "Software and AI"
+payee = ["openai", "github", "google one", "google *services", "microsoft", "adobe",
+         "dropbox", "apple.com/bill"]
+category = "Software"
+
+[[rule]]
+name = "Entertainment"
+payee = ["spotify", "netflix", "neon", "disney", "steam"]
+category = "Entertainment"
+
+[[rule]]
+name = "Pharmacy"
+payee = ["unichem", "life pharmacy", "chemist warehouse"]
+category = "Health"
+
+[[rule]]
+name = "Eating out"
+payee = ["cafe", "subway", "mcdonalds", "kfc", "burger king", "dairy", "bakery", "sushi"]
+category = "Eating out"
+
+[[rule]]
+name = "Bank fees"
+payee = ["foreign currency fee", "account fee"]
+category = "Fees"

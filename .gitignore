@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+dist/
+.pytest_cache/
+# Never commit real exports or the database
+*.db
+*.db-*
+/inbox/
+/archive/
+# Bank exports: only the synthetic test fixtures may be committed
+*.csv
+*.ofx
+*.qfx
+*.qif
+!tests/fixtures/*
