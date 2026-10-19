@@ -341,6 +341,14 @@ def test_cli_account_commands(tmp_path, monkeypatch):
     assert run("import", "-a", "joint", str(FIX / "everyday_2026-09.csv")).exit_code == 0
     assert run("accounts", "edit", "joint", "--rename", "shared", "--number", "0100-0000000-09").exit_code == 0
     assert run("accounts", "add", "other", "--number", "0100-0000000-09").exit_code == 1
+    run("accounts", "add", "rent")
+    r = run("accounts", "edit", "rent", "--number", "0100-0000000-09")
+    assert r.exit_code == 1 and "on shared" in r.output and "--number none" in r.output
+    assert run("accounts", "edit", "shared", "--number", "none").exit_code == 0
+    assert run("accounts", "edit", "rent", "--number", "0100-0000000-09").exit_code == 0
+    run("accounts", "edit", "rent", "--number", "none")
+    run("accounts", "edit", "shared", "--number", "0100-0000000-09")
+    run("accounts", "remove", "rent")
     assert run("accounts", "remove", "shared").exit_code == 1  # has transactions
     data = json.loads(run("accounts", "--json").output)
     assert [(a["key"], a["type"], a["transactions"]) for a in data] == [("shared", "savings", 9)]
@@ -1448,3 +1456,119 @@ def test_tui_rename_and_cancel_on_recurring_tab(monkeypatch, tmp_path):
             assert "Rent" in names(t)[-1] and "dim" in names(t)[-1]  # cancelled: dimmed, at the bottom
             assert "Rent" not in str(app.query_one("#upcoming").render())
     asyncio.run(run())
+
+
+def _span(key, first, covered, opened=None, closed=None):
+    return {"key": key, "first": first, "last": covered, "covered_until": covered,
+            "opened_on": opened, "closed_on": closed}
+
+
+def test_new_and_closed_accounts_keep_months_complete():
+    old = _span("old", "2026-01-01", "2026-10-15")
+    new = _span("new", "2026-06-10", "2026-10-15")
+    assert not queries.month_complete([old, new], "2026-03")  # maybe new had history you didn't export
+    new["opened_on"] = "2026-06-10"
+    assert queries.month_complete([old, new], "2026-03")      # it didn't exist yet
+    assert queries.month_complete([old, new], "2026-06")      # needed only from the day it opened
+    quiet = _span("old", "2026-01-01", "2026-07-20")          # stopped getting exports in July
+    assert not queries.month_complete([quiet, new], "2026-09")
+    quiet["closed_on"] = "2026-07-25"
+    assert queries.month_complete([quiet, new], "2026-09")
+    assert queries.month_complete([quiet, new], "2026-07")
+
+
+def test_quiet_account_with_fresh_exports_is_not_stale(env):
+    paths, conn = env
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))  # newest row 12 Sep 2026
+    today = date.today()
+    acct = conn.execute("SELECT id FROM accounts WHERE key = 'everyday'").fetchone()[0]
+
+    def set_import(day):
+        conn.execute("UPDATE imports SET imported_at = ? WHERE account_id = ?", (f"{day}T09:00:00", acct))
+        conn.commit()
+
+    set_import("2026-10-20")  # exported a month after its newest row: nothing happened since
+    (span,) = queries.account_spans(conn, today=date(2026, 10, 25))
+    assert span["covered_until"] == "2026-10-20"
+    set_import("2027-03-01")  # an old file imported much later says nothing about recent months
+    (span,) = queries.account_spans(conn, today=date(2027, 3, 5))
+    assert span["covered_until"] == "2026-09-12"
+    assert [a["key"] for a in queries.stale(conn)] == (["everyday"] if (today - date(2026, 9, 12)).days > 30 else [])
+    conn.execute("UPDATE accounts SET closed_on = '2026-09-30'")
+    assert queries.stale(conn) == []
+
+
+def test_hand_entered_account_is_never_stale(tmp_path, monkeypatch):
+    run = _cli(tmp_path, monkeypatch)
+    run("accounts", "add", "cash", "--type", "other")
+    run("add", "cash", "-5", "Market", "--date", "2025-01-01")
+    data = json.loads(run("accounts", "--json").output)
+    assert data[0]["manual_only"] and run("stale").exit_code == 0
+
+
+def test_cli_opened_and_closed(tmp_path, monkeypatch):
+    run = _cli(tmp_path, monkeypatch)
+    run("import", FIX / "everyday_2026-09.csv")
+    assert run("accounts", "edit", "everyday", "--closed", "30/09/2026").exit_code != 0
+    r = run("accounts", "edit", "everyday", "--opened", "2026-09-01", "--closed", "2026-09-30")
+    assert r.exit_code == 0 and "closed" in r.output
+    a = json.loads(run("accounts", "--json").output)[0]
+    assert (a["opened_on"], a["closed_on"]) == ("2026-09-01", "2026-09-30")
+    assert "closed" in run("accounts").output and run("stale").exit_code == 0
+    run("accounts", "edit", "everyday", "--closed", "none")
+    assert json.loads(run("accounts", "--json").output)[0]["closed_on"] is None
+
+
+def test_report_ignores_accounts_outside_their_open_dates(env):
+    from kete import report as rep
+
+    paths, conn = env
+    importer.import_file(conn, paths, copy(paths, "everyday_2026-09.csv"))
+    importer.import_file(conn, paths, copy(paths, "savings_2026-09.csv"))
+    kind, start, end, label = rep.parse_period(month="2026-09", today=date(2026, 10, 19))
+
+    def coverage():
+        model = rep.build_report(conn, kind, start, end, label, today=date(2026, 10, 19))
+        return sorted(f["title"] for f in model["findings"] if f["id"].startswith("coverage:"))
+
+    conn.execute("UPDATE imports SET imported_at = '2026-09-13T09:00:00'")  # last exported mid-September
+    assert coverage() == ["everyday doesn't cover the whole period"]  # savings has a row on the 30th
+    conn.execute("UPDATE accounts SET opened_on = '2026-09-01', closed_on = '2026-09-12'")
+    assert coverage() == []
+
+
+def test_add_account_before_its_first_export(tmp_path, monkeypatch):
+    run = _cli(tmp_path, monkeypatch)
+    assert run("accounts", "add", "everyday", "--opened", "2026-10-20").exit_code == 0
+    assert run("accounts", "add", "other", "--opened", "soon").exit_code != 0
+    assert "no transactions yet" in run("stale").output
+    run("import", FIX / "everyday_2026-09.csv")
+    a = json.loads(run("accounts", "--json").output)[0]
+    assert (a["key"], a["opened_on"], a["transactions"]) == ("everyday", "2026-10-20", 9)
+
+
+def test_negative_amounts_on_the_command_line(tmp_path, monkeypatch):
+    run = _cli(tmp_path, monkeypatch)
+    run("import", FIX / "everyday_2026-09.csv")
+    r = run("balance", "set", "everyday", "-350.20", "--as-of", "2026-09-12")
+    assert r.exit_code == 0, r.output
+    assert json.loads(run("accounts", "--json").output)[0]["balance"] == -350.2
+    run("accounts", "add", "cash", "--type", "other")
+    assert run("add", "cash", "-4.50", "Coffee").exit_code == 0
+
+
+@pytest.mark.parametrize("text,value", [("-9.74", -9.74), ("\u20139.74", -9.74), ("\u22129.74", -9.74),
+                                        ("$1,234.50", 1234.5), ("-$12", -12.0), ("0", 0.0)])
+def test_parse_dollars_accepts_typographic_minus(text, value):
+    from kete.cli import parse_dollars
+
+    assert parse_dollars(text) == value
+
+
+def test_balance_set_with_en_dash(tmp_path, monkeypatch):
+    run = _cli(tmp_path, monkeypatch)
+    run("import", FIX / "everyday_2026-09.csv")
+    r = run("balance", "set", "everyday", "\u20139.74", "--as-of", "2026-09-12")
+    assert r.exit_code == 0, r.output
+    assert json.loads(run("accounts", "--json").output)[0]["balance"] == -9.74
+    assert run("balance", "set", "everyday", "nine").exit_code != 0

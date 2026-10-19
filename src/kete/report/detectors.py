@@ -365,15 +365,15 @@ def fees(ctx: Context) -> list[Finding]:
 def data_quality(ctx: Context) -> list[Finding]:
     """Things that make the report less trustworthy: stale or partial data, uncategorised spending."""
     out = []
-    spans = ctx.conn.execute(
-        """SELECT a.key, MIN(posted_date) first, MAX(posted_date) last FROM transactions t
-           JOIN accounts a ON a.id = t.account_id GROUP BY a.id""").fetchall()
-    for s in spans:
+    lo, hi = ctx.start.isoformat(), ctx.end.isoformat()
+    for s in queries.account_spans(ctx.conn, ctx.today):
+        if (s["opened_on"] and s["opened_on"] > hi) or (s["closed_on"] and s["closed_on"] < lo):
+            continue  # not open in this period
         gaps = []
-        if s["first"] > ctx.start.isoformat():
+        if not s["opened_on"] and s["first"] > lo:
             gaps.append(f"starts {s['first']}")
-        if ctx.complete and s["last"] < ctx.end.isoformat():
-            gaps.append(f"ends {s['last']}")
+        if ctx.complete and not s["closed_on"] and s["covered_until"] < hi:
+            gaps.append(f"ends {s['covered_until']}")
         if gaps:
             out.append(Finding(f"coverage:{s['key']}:{ctx.start}:{ctx.end}", "data_quality", "low",
                                f"{s['key']} doesn't cover the whole period",

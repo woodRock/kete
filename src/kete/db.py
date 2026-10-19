@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS accounts (
     number        TEXT,                        -- full number, used to match OFX ACCTID
     number_masked TEXT,
     type          TEXT NOT NULL DEFAULT 'everyday',
-    currency      TEXT NOT NULL DEFAULT 'NZD'
+    currency      TEXT NOT NULL DEFAULT 'NZD',
+    opened_on     TEXT,                        -- set for a new account: no data needed before this
+    closed_on     TEXT                         -- set once closed: no exports needed after this
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS accounts_number ON accounts(number);
@@ -148,6 +150,10 @@ def connect(path: Path, readonly: bool = False) -> sqlite3.Connection:
         for col in ("pending", "shared_cents"):
             if col not in cols:
                 conn.execute(f"ALTER TABLE transactions ADD COLUMN {col} INTEGER NOT NULL DEFAULT 0")
+        acols = {r[1] for r in conn.execute("PRAGMA table_info(accounts)")}
+        for col in ("opened_on", "closed_on"):
+            if col not in acols:
+                conn.execute(f"ALTER TABLE accounts ADD COLUMN {col} TEXT")
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")

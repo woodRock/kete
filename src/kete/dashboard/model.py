@@ -120,19 +120,13 @@ def build_model(conn: sqlite3.Connection, config: dict | None = None,
 
     # --- coverage: months where every account has data (an account added later would
     # otherwise make earlier months look cheap).
-    spans = conn.execute(
-        """SELECT a.key, MIN(posted_date) first, MAX(posted_date) last FROM transactions t
-           JOIN accounts a ON a.id = t.account_id GROUP BY a.id""").fetchall()
+    # Accounts opened later (opened_on) or closed (closed_on) only count while open.
+    spans = queries.account_spans(conn, today)
     this_month = _month(today)
-    if spans:
-        first = max(date.fromisoformat(s["first"]) for s in spans)
-        last = min(date.fromisoformat(s["last"]) for s in spans)
-        cov_start = _month(first) if first.day <= 3 else _month_add(_month(first), 1)
-        cov_end = _month(last) if last >= _last_day(_month(last)) - timedelta(days=2) else _month_add(_month(last), -1)
-        cov_end = min(cov_end, _month_add(this_month, -1))
-    else:
-        cov_start, cov_end = this_month, _month_add(this_month, -1)
-    complete = _month_range(cov_start, cov_end) if cov_start <= cov_end else []
+    earliest = min((s["first"] for s in spans), default=today.isoformat())
+    complete = [m for m in _month_range(_month(earliest), _month_add(this_month, -1))
+                if spans and queries.month_complete(spans, m)]
+    cov_start = complete[0] if complete else this_month
     recent = complete[-cfg["recent_months"]:]
     baseline = complete[-(cfg["recent_months"] + cfg["baseline_months"]):-cfg["recent_months"]] \
         if len(complete) > cfg["recent_months"] else []
@@ -309,7 +303,8 @@ def build_model(conn: sqlite3.Connection, config: dict | None = None,
     opportunities = _opportunities(categories, subs, subs_by_cat, cfg, len(recent))
     insights = _insights(categories, flexible, frequent_small, subs, weekday, kpis, len(recent), today)
 
-    stale = [s["key"] for s in spans if (today - date.fromisoformat(s["last"])).days > 30]
+    stale = [s["key"] for s in spans
+             if not s["closed_on"] and (today - date.fromisoformat(s["covered_until"])).days > 30]
     uncat = next((c for c in categories if c["name"] == "Uncategorised"), None)
     recent_total = sum(c["recent_avg"] for c in categories) or 1
 
@@ -345,7 +340,8 @@ def build_model(conn: sqlite3.Connection, config: dict | None = None,
             "months_complete": len(complete),
             "uncategorised_share": round((uncat["recent_avg"] if uncat else 0) / recent_total * 100, 1),
             "stale_accounts": stale,
-            "accounts": [{"key": s["key"], "first": s["first"], "last": s["last"]} for s in spans],
+            "accounts": [{"key": s["key"], "first": s["first"], "last": s["last"],
+                          "opened_on": s["opened_on"], "closed_on": s["closed_on"]} for s in spans],
         },
     }
 

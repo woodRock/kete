@@ -123,7 +123,56 @@ def latest_balance(conn: sqlite3.Connection, account_id: int) -> dict | None:
     }
 
 
+RECENT_EXPORT_DAYS = 45  # an import whose newest row is this recent was a fresh export
+
+
+def account_spans(conn: sqlite3.Connection, today: date | None = None) -> list[dict]:
+    """Per account with imported transactions: the dates its data covers.
+
+    covered_until is the newest transaction, or the day a fresh export was imported if later: a
+    quiet account you still export isn't stale. Accounts with only hand-entered transactions
+    (kete add) are left out, since there's no export to keep up to date."""
+    today = today or date.today()
+    out = []
+    for a in conn.execute(
+        """SELECT a.id, a.key, a.opened_on, a.closed_on, MIN(t.posted_date) first, MAX(t.posted_date) last,
+                  SUM(t.source != 'manual') exported
+           FROM accounts a JOIN transactions t ON t.account_id = a.id GROUP BY a.id ORDER BY a.id"""):
+        if not a["exported"]:
+            continue
+        imports = conn.execute(
+            "SELECT substr(imported_at, 1, 10) day, date_to FROM imports WHERE account_id = ? AND date_to IS NOT NULL",
+            (a["id"],)).fetchall()
+        covered = a["last"]
+        for imp in imports:
+            if (date.fromisoformat(imp["day"]) - date.fromisoformat(imp["date_to"])).days <= RECENT_EXPORT_DAYS:
+                covered = max(covered, min(imp["day"], today.isoformat()))
+        out.append({"key": a["key"], "first": a["first"], "last": a["last"], "covered_until": covered,
+                    "opened_on": a["opened_on"], "closed_on": a["closed_on"]})
+    return out
+
+
+def month_complete(spans: list[dict], month: str) -> bool:
+    """Every account open during the month has data for all of it (a few days' slack at each end,
+    since exports and statement dates rarely line up exactly)."""
+    ms, me = _month_bounds(month)
+    ms_d, me_d = date.fromisoformat(ms), date.fromisoformat(me) - timedelta(days=1)
+    for s in spans:
+        opened = date.fromisoformat(s["opened_on"]) if s["opened_on"] else None
+        closed = date.fromisoformat(s["closed_on"]) if s["closed_on"] else None
+        if (opened and opened > me_d) or (closed and closed < ms_d):
+            continue  # not open this month: nothing needed from it
+        need_from = max(ms_d, opened) if opened else ms_d
+        need_to = min(me_d, closed) if closed else me_d
+        if not opened and date.fromisoformat(s["first"]) > need_from + timedelta(days=3):
+            return False
+        if date.fromisoformat(s["covered_until"]) < need_to - timedelta(days=2) and not (closed and closed <= me_d):
+            return False
+    return True
+
+
 def accounts(conn: sqlite3.Connection) -> list[dict]:
+    spans = {s["key"]: s for s in account_spans(conn)}
     out = []
     for a in conn.execute("SELECT * FROM accounts ORDER BY id"):
         stats = conn.execute(
@@ -135,7 +184,8 @@ def accounts(conn: sqlite3.Connection) -> list[dict]:
             "SELECT MAX(imported_at) FROM imports WHERE account_id = ?", (a["id"],)
         ).fetchone()[0]
         bal = latest_balance(conn, a["id"])
-        days = (date.today() - date.fromisoformat(stats["last"])).days if stats["last"] else None
+        covered = spans[a["key"]]["covered_until"] if a["key"] in spans else stats["last"]
+        days = (date.today() - date.fromisoformat(covered)).days if covered else None
         out.append({
             "key": a["key"],
             "label": a["label"],
@@ -145,7 +195,11 @@ def accounts(conn: sqlite3.Connection) -> list[dict]:
             "transactions": stats["n"],
             "first_date": stats["first"],
             "last_date": stats["last"],
+            "covered_until": covered,
             "days_since_last": days,
+            "opened_on": a["opened_on"],
+            "closed_on": a["closed_on"],
+            "manual_only": stats["n"] > 0 and a["key"] not in spans,
             "last_imported": imp,
             "balance": bal["balance"] if bal else None,
             "balance_as_of": bal["as_of"] if bal else None,
@@ -271,7 +325,9 @@ def cashflow(conn: sqlite3.Connection, months: int = 12) -> list[dict]:
 
 
 def stale(conn: sqlite3.Connection, days: int = 30) -> list[dict]:
-    return [a for a in accounts(conn) if a["days_since_last"] is None or a["days_since_last"] > days]
+    """Accounts due a fresh export. Closed accounts and hand-entered ones (kete add) never are."""
+    return [a for a in accounts(conn) if not a["closed_on"] and not a["manual_only"]
+            and (a["days_since_last"] is None or a["days_since_last"] > days)]
 
 
 CADENCES = (("weekly", 7, 1), ("fortnightly", 14, 2), ("monthly", 30.4, 4),

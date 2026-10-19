@@ -41,6 +41,24 @@ other). How a file finds its account, in order:
 `kete accounts edit KEY [--label] [--type] [--number] [--rename NEW]` and
 `kete accounts remove KEY` (only if it has no transactions).
 
+### Opening, closing and switching accounts
+
+The dashboard only treats a month as complete when every account has data for it, so missing
+exports don't look like cheap months. Tell kete when an account's life starts or ends so that
+rule stays fair:
+
+- **A new account:** `kete accounts add everyday --opened 2026-10-20` (before its first export),
+  or `kete accounts edit everyday --opened 2026-10-20` for one that already exists. Months before
+  it opened don't need its data. `kete import` asks about this when a file creates a new account.
+- **A closed account:** `kete accounts edit old --closed 2026-12-31` (`--closed none` reopens).
+  No more export reminders, and its history stays in your totals.
+- **A quiet account** you still export (say, while moving payments off it) isn't stale: a fresh
+  export counts as covering up to the day you import it, even if it has no new transactions.
+- Accounts with only hand-entered transactions (`kete add`) never need exports.
+
+Subscriptions, bills, categories and reports follow the payee, so payments that move from one
+account to another carry on as before. Rules with an `account = "..."` condition need updating.
+
 ### Other banks and cards
 
 Exports kete can't read on its own (another bank, a credit card that shows charges as positive

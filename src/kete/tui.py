@@ -302,7 +302,12 @@ class KeteApp(App):
         ids = {r["key"]: r["id"] for r in self.conn.execute("SELECT id, key FROM accounts")}
         for a in queries.accounts(self.conn):
             age = a["days_since_last"]
-            age_txt = "—" if age is None else (f"[red]{age}d stale[/]" if age > 30 else f"{age}d")
+            if a["closed_on"]:
+                age_txt = "[dim]closed[/]"
+            elif a["manual_only"]:
+                age_txt = "[dim]by hand[/]"
+            else:
+                age_txt = "—" if age is None else (f"[red]{age}d stale[/]" if age > 30 else f"{age}d")
             hist = queries.balance_history(self.conn, ids[a["key"]], 90)
             trend = f"[dodger_blue2]{spark(hist, 24)}[/]" if hist else "[dim]set a balance to see this[/]"
             t.add_row(cell_escape(a["label"]), a["number_masked"] or "", a["last_date"] or "—", age_txt,

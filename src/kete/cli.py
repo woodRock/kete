@@ -62,6 +62,21 @@ def _open(readonly: bool = True) -> sqlite3.Connection:
     return dbmod.connect(paths.db, readonly=readonly)
 
 
+_MINUS = str.maketrans({"\u2013": "-", "\u2014": "-", "\u2212": "-", "\u2012": "-", "\ufe63": "-", "\uff0d": "-"})
+
+
+def parse_dollars(text: str) -> float:
+    """'-9.74', '–9.74' (an en dash from autocorrect), '$1,234.50', '-$12' -> float."""
+    s = text.strip().translate(_MINUS).replace(",", "").replace(" ", "")
+    neg = s.startswith("-")
+    s = s.lstrip("-").lstrip("$")
+    try:
+        value = float(s)
+    except ValueError:
+        raise typer.BadParameter(f"{text!r} isn't an amount; use something like -9.74") from None
+    return -value if neg else value
+
+
 def _money(v: float | None) -> str:
     if v is None:
         return "—"
@@ -124,6 +139,7 @@ def import_cmd(
     if account and not importer.account_exists(conn, account):
         err.print(f"[red]Unknown account {account!r}.[/] Create it first: kete accounts add {account}")
         raise typer.Exit(1)
+    known = {r[0] for r in conn.execute("SELECT key FROM accounts")}
     try:
         results = [importer.import_file(conn, paths, f, ask=_ask_account, account=account)
                    for f in files]
@@ -147,6 +163,7 @@ def import_cmd(
             err.print(f"[yellow]{r.filename}:[/] {w}")
         if r.error:
             err.print(f"[red]{r.filename}:[/] {r.error}")
+    _ask_new_accounts(conn, known, as_json)
     if any(r.rows_new for r in results):
         pending = transfers.detect(conn)
         if pending:
@@ -154,6 +171,23 @@ def import_cmd(
                           "review with [bold]kete transfers detect[/].")
     if any(r.status == "error" for r in results):
         raise typer.Exit(1)
+
+
+def _ask_new_accounts(conn: sqlite3.Connection, known: set[str], quiet: bool) -> None:
+    """A file just created an account: is it a newly opened bank account? If so, months before
+    its first transaction don't need its data (or the dashboard would treat them as incomplete)."""
+    for r in conn.execute("""SELECT a.id, a.key, MIN(t.posted_date) first FROM accounts a
+                             JOIN transactions t ON t.account_id = a.id GROUP BY a.id"""):
+        if r["key"] in known:
+            continue
+        if not quiet and sys.stdin.isatty() and typer.confirm(
+                f"{r['key']} is new to kete. Is it a newly opened bank account (nothing before {r['first']})?",
+                default=False):
+            conn.execute("UPDATE accounts SET opened_on = ? WHERE id = ?", (r["first"], r["id"]))
+            conn.commit()
+        elif not quiet:
+            err.print(f"[dim]If {r['key']} is a newly opened account: kete accounts edit {r['key']} "
+                      f"--opened {r['first']}[/]")
 
 
 def _check_type(type_: str | None) -> None:
@@ -167,21 +201,27 @@ def accounts_add(
     label: Optional[str] = typer.Option(None, "--label", help="Display name."),
     type_: str = typer.Option("everyday", "--type", help=", ".join(ACCOUNT_TYPES)),
     number: Optional[str] = typer.Option(None, "--number", help="Account number, e.g. 0100-0012345-05."),
+    opened: Optional[str] = typer.Option(None, "--opened", help="yyyy-mm-dd, for a newly opened account."),
 ):
     """Add an account. Exports named KEY_....csv then import into it automatically."""
     key = key.lower()
     if not importer.KEY_RE.match(key):
         raise typer.BadParameter("use lower-case letters, digits and dashes")
     _check_type(type_)
+    if opened:
+        try:
+            date.fromisoformat(opened)
+        except ValueError:
+            raise typer.BadParameter("--opened must be yyyy-mm-dd")
     conn = _open(readonly=False)
     if dbmod.find_account(conn, key):
         err.print(f"[red]Account {key!r} already exists.[/] Use kete accounts edit.")
         raise typer.Exit(1)
     try:
         conn.execute(
-            "INSERT INTO accounts (key, label, type, number, number_masked) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO accounts (key, label, type, number, number_masked, opened_on) VALUES (?, ?, ?, ?, ?, ?)",
             (key, label or key.replace("-", " ").title(), type_, number,
-             dbmod.mask_number(number) if number else None),
+             dbmod.mask_number(number) if number else None, opened),
         )
     except sqlite3.IntegrityError:
         err.print(f"[red]Another account already has number {number}.[/]")
@@ -195,11 +235,19 @@ def accounts_edit(
     key: str,
     label: Optional[str] = typer.Option(None, "--label"),
     type_: Optional[str] = typer.Option(None, "--type", help=", ".join(ACCOUNT_TYPES)),
-    number: Optional[str] = typer.Option(None, "--number"),
+    number: Optional[str] = typer.Option(None, "--number", help="Account number; 'none' clears it."),
     rename: Optional[str] = typer.Option(None, "--rename", help="New short name."),
+    opened: Optional[str] = typer.Option(None, "--opened", help="yyyy-mm-dd it was opened, if new; 'none' clears."),
+    closed: Optional[str] = typer.Option(None, "--closed", help="yyyy-mm-dd it was closed; 'none' reopens."),
 ):
-    """Change an account's label, type, number or short name."""
+    """Change an account's label, type, number, short name, or opening/closing date."""
     _check_type(type_)
+    for value, flag in ((opened, "--opened"), (closed, "--closed")):
+        if value and value.lower() != "none":
+            try:
+                date.fromisoformat(value)
+            except ValueError:
+                raise typer.BadParameter(f"{flag} must be yyyy-mm-dd or none")
     conn = _open(readonly=False)
     acct = dbmod.find_account(conn, key)
     if not acct:
@@ -212,18 +260,33 @@ def accounts_edit(
         if dbmod.find_account(conn, rename):
             err.print(f"[red]Account {rename!r} already exists.[/]")
             raise typer.Exit(1)
-    try:
-        conn.execute(
-            """UPDATE accounts SET label = COALESCE(?, label), type = COALESCE(?, type),
-               number = COALESCE(?, number), number_masked = COALESCE(?, number_masked),
-               key = COALESCE(?, key) WHERE id = ?""",
-            (label, type_, number, dbmod.mask_number(number) if number else None, rename, acct["id"]),
-        )
-    except sqlite3.IntegrityError:
-        err.print(f"[red]Another account already has number {number}.[/]")
-        raise typer.Exit(1)
+    clear_number = number is not None and number.lower() == "none"
+    if number and not clear_number:
+        holder = conn.execute("SELECT key FROM accounts WHERE number = ? AND id != ?", (number, acct["id"])).fetchone()
+        if holder:
+            err.print(f"[red]That number is on {holder['key']}.[/] If it doesn't belong there, clear it first: "
+                      f"kete accounts edit {holder['key']} --number none")
+            raise typer.Exit(1)
+    conn.execute(
+        """UPDATE accounts SET label = COALESCE(?, label), type = COALESCE(?, type),
+           number = COALESCE(?, number), number_masked = COALESCE(?, number_masked),
+           key = COALESCE(?, key) WHERE id = ?""",
+        (label, type_, None if clear_number else number,
+         dbmod.mask_number(number) if number and not clear_number else None, rename, acct["id"]),
+    )
+    if clear_number:
+        conn.execute("UPDATE accounts SET number = NULL, number_masked = NULL WHERE id = ?", (acct["id"],))
+    for col, value in (("opened_on", opened), ("closed_on", closed)):
+        if value is not None:
+            conn.execute(f"UPDATE accounts SET {col} = ? WHERE id = ?",
+                         (None if value.lower() == "none" else value, acct["id"]))
     conn.commit()
-    console.print(f"Updated {rename or acct['key']}.")
+    msg = f"Updated {rename or acct['key']}."
+    if closed and closed.lower() != "none":
+        msg += " It's closed: no more export reminders, and its history stays in your totals."
+    if opened and opened.lower() != "none":
+        msg += " Months before it opened no longer need its data."
+    console.print(msg)
 
 
 @accounts_app.command("remove")
@@ -258,10 +321,11 @@ def accounts(ctx: typer.Context, as_json: bool = JsonOpt):
     if as_json:
         return _emit_json(data)
     _table(
-        ["account", "label", "number", "txns", "first", "last", "age", "balance"],
+        ["account", "label", "number", "txns", "first", "last", "age", "balance", "status"],
         [[a["key"], a["label"], a["number_masked"], a["transactions"], a["first_date"], a["last_date"],
-          f"{a['days_since_last']}d" if a["days_since_last"] is not None else None,
-          _money(a["balance"]) + (f" ({a['balance_as_of']})" if a["balance"] is not None else "")]
+          f"{a['days_since_last']}d" if a["days_since_last"] is not None and not a["closed_on"] else None,
+          _money(a["balance"]) + (f" ({a['balance_as_of']})" if a["balance"] is not None else ""),
+          f"closed {a['closed_on']}" if a["closed_on"] else (f"opened {a['opened_on']}" if a["opened_on"] else "")]
          for a in data],
         right={3, 6, 7},
     )
@@ -384,6 +448,9 @@ def stale(days: int = typer.Option(30, "--days"), as_json: bool = JsonOpt):
         console.print(f"All accounts have transactions in the last {days} days.")
         return
     for a in data:
+        if a["last_date"] is None:
+            console.print(f"[yellow]{a['key']}[/]: no transactions yet — export it from Westpac One")
+            continue
         console.print(f"[yellow]{a['key']}[/]: newest transaction {a['last_date']} "
                       f"({a['days_since_last']} days ago) — export from Westpac One")
     raise typer.Exit(2)
@@ -533,13 +600,14 @@ def transfers_unpair(tx_id: int):
 # --------------------------------------------------------------------------- balances
 
 
-@balance_app.command("set")
+@balance_app.command("set", context_settings={"ignore_unknown_options": True})  # so -350.20 is an amount
 def balance_set(
     account: str,
-    amount: float,
+    amount_text: str = typer.Argument(..., metavar="AMOUNT", help="Dollars; negative if you owe it."),
     as_of: str = typer.Option(None, "--as-of", help="yyyy-mm-dd, end of day; default today."),
 ):
     """Record a known balance (from Westpac One) so CSV-only accounts can show balances."""
+    amount = parse_dollars(amount_text)
     conn = _open(readonly=False)
     acct = dbmod.find_account(conn, account)
     if not acct:
@@ -692,7 +760,7 @@ def history_cmd(limit: int = typer.Option(20, "--limit", "-n"), as_json: bool = 
 @app.command("add", context_settings={"ignore_unknown_options": True})  # so -12.50 is an amount
 def add_cmd(
     account: str = typer.Argument(..., help="Account key, e.g. cash (kete accounts add cash --type other)."),
-    amount: float = typer.Argument(..., help="Signed dollars: -12.50 spent, 50 received."),
+    amount_text: str = typer.Argument(..., metavar="AMOUNT", help="Signed dollars: -12.50 spent, 50 received."),
     payee: str = typer.Argument(..., help="Who it was paid to or received from."),
     on: Optional[str] = typer.Option(None, "--date", help="yyyy-mm-dd; default today."),
     category: Optional[str] = typer.Option(None, "--category", "-c", help="Default: your rules decide."),
@@ -702,6 +770,7 @@ def add_cmd(
     """Add a transaction by hand (cash, or anything missing from an export). kete undo removes it."""
     import uuid
 
+    amount = parse_dollars(amount_text)
     conn = _open(readonly=False)
     acct = dbmod.find_account(conn, account)
     if not acct:
